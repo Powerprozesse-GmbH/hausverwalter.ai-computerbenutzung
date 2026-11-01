@@ -13,7 +13,7 @@ BASE="$HOME/Library/Application Support/hausverwalter-computer"
 APP="$BASE/app"
 VENV="$BASE/venv"
 PY="$VENV/bin/python"
-LAUNCHER="$HOME/Applications/hausverwalter Computer.command"
+LAUNCHER="$HOME/Applications/hausverwalter Computer.app"
 KEY_URL="${HV_KEY_URL:-https://app.hausverwalter.ai/settings/api-keys}"
 KEY_HINT='Ich habe die Schlüssel-Seite von hausverwalter.ai geöffnet. Klick dort auf „Erstellen“ und „Kopieren“. Danach geht es von selbst weiter.'
 KEY_PROMPT='Perfekt. Füge den Schlüssel jetzt hier ein (⌘V) und klick auf „Speichern“.'
@@ -80,15 +80,29 @@ main() {
   fi
 
   say "5/5 Startsymbol anlegen"
-  cat > "$LAUNCHER" <<EOF
+  # A real app without a window: no Terminal window, and the Mac settings list it by its own name.
+  rm -rf "$LAUNCHER" "$HOME/Applications/hausverwalter Computer.command"
+  mkdir -p "$LAUNCHER/Contents/MacOS"
+  cat > "$LAUNCHER/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>ai.hausverwalter.computer</string>
+<key>CFBundleName</key><string>hausverwalter Computer</string>
+<key>CFBundleExecutable</key><string>start</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>LSUIElement</key><true/>
+</dict></plist>
+EOF
+  cat > "$LAUNCHER/Contents/MacOS/start" <<EOF
 #!/bin/bash
-# Startet den hausverwalter Computer. Fenster offen lassen, solange er arbeiten soll; Schließen beendet ihn.
 cd "$APP/desktop_agent"
 export HV_PROVIDER=hausverwalter HV_VIA_STARTSYMBOL=1
-"$PY" mac_rights.py || exit 1
-exec "$PY" server.py
+"$PY" mac_rights.py >> "$BASE/programm.log" 2>&1 || exit 1
+"$PY" server.py >> "$BASE/programm.log" 2>&1
 EOF
-  chmod +x "$LAUNCHER"
+  chmod +x "$LAUNCHER/Contents/MacOS/start"
+  codesign --force --deep -s - "$LAUNCHER" >/dev/null 2>&1 || true
   "$PY" "$APP/desktop_agent/mcp_eintragen.py" "$PY" "$APP/desktop_agent/mcp_server.py" || true
   if "$PY" "$APP/desktop_agent/api_key.py" pruefen >/dev/null 2>&1; then open "$LAUNCHER"; fi
 

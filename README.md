@@ -48,7 +48,7 @@ Was dabei passiert:
 1. Python wird in Ihren Benutzerordner geladen (über das Werkzeug „uv“), ohne Administratorrechte und ohne Ihr System zu verändern.
 2. Das Programm kommt nach `~/Library/Application Support/hausverwalter-computer` (Mac) bzw. `%LOCALAPPDATA%\hausverwalter-computer` (Windows).
 3. Ein kleines Fenster fragt nach Ihrem API-Schlüssel. Die Eingabe ist verdeckt, auch Ihr KI-Agent sieht den Schlüssel nicht.
-4. Es entsteht ein Startsymbol „hausverwalter Computer“ (Mac: Ordner „Programme“ in Ihrem Benutzerordner, Windows: Startmenü).
+4. Es entsteht das Programm „hausverwalter Computer“ (Mac: Ordner „Programme“ in Ihrem Benutzerordner, Windows: Startmenü). Es läuft ohne eigenes Fenster.
 5. Ihr KI-Agent wird eingetragen (OpenCode, Claude-App, Claude Code, falls vorhanden), und der Assistent startet.
 6. Nur Mac: Der Assistent öffnet nacheinander **Bildschirmaufnahme** und **Bedienungshilfen** und sagt Ihnen, welchen Schalter Sie einschalten. Danach macht er von selbst weiter.
 
@@ -56,13 +56,13 @@ Zum Aktualisieren den Befehl einfach noch einmal ausführen. Der Schlüssel blei
 
 ## Starten und bedienen
 
-1. Starten: Doppelklick auf **hausverwalter Computer** (Mac) bzw. Startmenü › **hausverwalter Computer** (Windows). Ein Fenster mit Text bleibt offen, solange der Assistent läuft.
+1. Starten: Doppelklick auf **hausverwalter Computer** (Mac) bzw. Startmenü › **hausverwalter Computer** (Windows). Ihr KI-Agent startet es sonst von selbst.
 2. Sie sprechen nur mit Ihrem KI-Agenten: Er gibt dem Assistenten die Aufträge.
 3. Während er arbeitet, können Sie Ihrem KI-Agenten weiter schreiben: Korrekturen („nimm die andere Rechnung“) oder Fragen („was machst du gerade?“).
 4. Oben auf dem Bildschirm sehen Sie die Leiste:
    - **Pause**: Er hält vor dem nächsten Schritt an, der Rahmen wird gelb. **Weiter** macht weiter.
    - **Stopp**: Er bricht sofort ab und macht keinen Schritt mehr.
-5. Notfall: Das Textfenster des Assistenten schließen beendet alles.
+5. Notfall: **Stopp** drücken.
 
 ## Kosten
 

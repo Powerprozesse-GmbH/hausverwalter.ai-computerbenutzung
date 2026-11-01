@@ -115,7 +115,7 @@
     # The code's default provider is hausverwalter, so the shortcut needs no environment variables.
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut($Shortcut)
-    $link.TargetPath = $Py
+    $link.TargetPath = Join-Path $Venv "Scripts\pythonw.exe"  # no console window
     $link.Arguments = '"' + (Join-Path $App "desktop_agent\server.py") + '"'
     $link.WorkingDirectory = Join-Path $App "desktop_agent"
     $link.Description = "hausverwalter Computer: die KI bedient diesen PC"

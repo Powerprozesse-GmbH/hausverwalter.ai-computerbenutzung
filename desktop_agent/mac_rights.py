@@ -1,6 +1,6 @@
 """Mac only: gets the two permissions before the assistant starts, one switch at a time.
 
-Runs from the start entry, so it checks the app that really needs them (Terminal). Opens the exact
+Runs from the app, so it checks the app that really needs them. Opens the exact
 settings page and waits until the switch is on; the person does nothing else. While waiting, the
 sentence for the person is in a file, so mcp_server.py can hand it to the calling AI agent.
 """
@@ -50,7 +50,7 @@ def read_status() -> str | None:
 
 
 def host_app() -> str:
-    return {"iTerm.app": "iTerm"}.get(os.environ.get("TERM_PROGRAM", ""), "Terminal")
+    return "hausverwalter Computer"
 
 
 def screen_ok() -> bool:

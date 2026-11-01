@@ -3,7 +3,7 @@ screen work to the desktop assistant and talk to it while it works.
 
 The user keeps chatting with their own agent; that agent forwards tasks and messages
 here and reads back what the assistant does and asks. Starts server.py by itself when it is not
-running (Mac: through the start entry, so Terminal holds the permissions). Every request carries the server's per-start token (local_auth.py,
+running (Mac: through the app, so the app holds the permissions). Every request carries the server's per-start token (local_auth.py,
 read from the user-only file). No dependencies: JSON-RPC 2.0, one message per line.
 
 OpenCode (~/.config/opencode/opencode.json):
@@ -31,7 +31,7 @@ URL = "http://127.0.0.1:8765"
 PROTOCOL_VERSION = "2025-06-18"
 MAX_WAIT_SECONDS = 50
 START_WAIT_SECONDS = 25
-MAC_LAUNCHER = Path.home() / "Applications" / "hausverwalter Computer.command"
+MAC_LAUNCHER = Path.home() / "Applications" / "hausverwalter Computer.app"
 VERSION = "0.2.0"  # same as agent.VERSION (this file imports nothing heavy)
 
 TEXT = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
@@ -118,7 +118,7 @@ class Bridge:
     def _launch(self) -> bool:
         if sys.platform == "win32":
             folder = Path(__file__).resolve().parent
-            subprocess.Popen([sys.executable, str(folder / "server.py")], cwd=folder, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            subprocess.Popen([str(Path(sys.executable).with_name("pythonw.exe")), str(folder / "server.py")], cwd=folder, creationflags=subprocess.CREATE_NO_WINDOW)
             return True
         if not MAC_LAUNCHER.exists():
             return False
