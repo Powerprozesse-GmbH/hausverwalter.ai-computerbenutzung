@@ -22,6 +22,7 @@ main() {
   [ "$(uname -s)" = Darwin ] || { echo "Dieses Skript ist für macOS. Unter Windows: install.ps1"; exit 1; }
   mkdir -p "$BASE" "$HOME/Applications"
   lsof -ti tcp:8765 | xargs kill 2>/dev/null || true  # an update replaces the running program
+  pkill -f "desktop_agent/mac_rights.py|python mac_rights.py" 2>/dev/null || true
 
   say "1/5 uv einrichten (lädt Python, ohne Administratorrechte)"
   UV="$(command -v uv || true)"

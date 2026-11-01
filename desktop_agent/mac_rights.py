@@ -61,7 +61,9 @@ def screen_ok() -> bool:
 
 
 def access_ok() -> bool:
-    return bool(ctypes.cdll.LoadLibrary(SERVICES).AXIsProcessTrusted())
+    """From a new process: AXIsProcessTrusted stays false in a process that started before the switch went on."""
+    code = f"import ctypes, sys; sys.exit(0 if ctypes.cdll.LoadLibrary({SERVICES!r}).AXIsProcessTrusted() else 1)"
+    return subprocess.run([sys.executable, "-c", code], capture_output=True).returncode == 0
 
 
 def ask_screen() -> None:
