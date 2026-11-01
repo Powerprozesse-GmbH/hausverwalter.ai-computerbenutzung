@@ -62,10 +62,12 @@ TOOLS = [
     {"name": "computer_stopp", "description": "Bricht den aktuellen Auftrag des Computer-Assistenten ab.", "inputSchema": NONE},
 ]
 NOT_RUNNING = "Der Computer-Assistent startet nicht. Nicht den Nutzer bitten: Rufe das Werkzeug in einer Minute noch einmal auf, dann Fehler an den hausverwalter.ai-Support melden."
-NOT_INSTALLED = (
-    "hausverwalter Computer ist nicht installiert. Selbst installieren, Befehl selbst ausführen: "
-    "curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.sh | HV_KI=1 bash"
+INSTALL_COMMAND = (
+    '$env:HV_KI = "1"; irm https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.ps1 | iex'
+    if sys.platform == "win32"
+    else "curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.sh | HV_KI=1 bash"
 )
+NOT_INSTALLED = f"hausverwalter Computer ist nicht installiert. Selbst installieren, Befehl selbst ausführen: {INSTALL_COMMAND}"
 KEY_MISSING = (
     "Noch kein Schlüssel. Schreib dem Nutzer zuerst genau: „Fertig installiert. Damit das Programm für dich arbeiten darf, braucht es einen Schlüssel aus hausverwalter.ai. "
     "Ich öffne dir jetzt die Seite in <Name deines Standard-Browsers, z. B. Google Chrome>: Klick dort auf „Erstellen“ und dann auf „Kopieren“. Füge ihn nicht hier im Chat ein, schreib mir nur „fertig“.“ "

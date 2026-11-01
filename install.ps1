@@ -71,6 +71,9 @@
     }
 
     Say "2/5 Programm laden"
+    # an update replaces the running program; it has no window the person could close
+    Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 1
     if (Test-Path $Venv) {
         # python.exe is locked while the assistant runs; check before anything is replaced
         try { Remove-Item $Venv -Recurse -Force }
