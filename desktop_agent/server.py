@@ -287,7 +287,7 @@ def main() -> None:
     atexit.register(local_auth.remove_token, token)
     if not os.environ.get("HV_NO_OVERLAY"):
         start_overlay()
-    if not os.environ.get("HV_NO_BROWSER"):
+    if os.environ.get("HV_BROWSER"):  # customers talk to their AI; the page is only for debugging
         webbrowser.open(f"http://127.0.0.1:{PORT}/#t={token}")
     print(f"Assistent läuft: http://127.0.0.1:{PORT}. Dieses Fenster offen lassen, Schließen beendet ihn.")
     server.serve_forever()

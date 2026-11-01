@@ -57,8 +57,8 @@ Zum Aktualisieren den Befehl einfach noch einmal ausführen. Der Schlüssel blei
 ## Starten und bedienen
 
 1. Starten: Doppelklick auf **hausverwalter Computer** (Mac) bzw. Startmenü › **hausverwalter Computer** (Windows). Ein Fenster mit Text bleibt offen, solange der Assistent läuft.
-2. Im Browser öffnet sich das Bedienfenster. Auftrag eintippen, **Senden**.
-3. Während er arbeitet, können Sie ihm weiter schreiben: Korrekturen („nimm die andere Rechnung“) oder Fragen („was machst du gerade?“).
+2. Sie sprechen nur mit Ihrem KI-Agenten: Er gibt dem Assistenten die Aufträge.
+3. Während er arbeitet, können Sie Ihrem KI-Agenten weiter schreiben: Korrekturen („nimm die andere Rechnung“) oder Fragen („was machst du gerade?“).
 4. Oben auf dem Bildschirm sehen Sie die Leiste:
    - **Pause**: Er hält vor dem nächsten Schritt an, der Rahmen wird gelb. **Weiter** macht weiter.
    - **Stopp**: Er bricht sofort ab und macht keinen Schritt mehr.
