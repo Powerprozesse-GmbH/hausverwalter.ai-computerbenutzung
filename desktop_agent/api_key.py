@@ -50,10 +50,10 @@ def delete() -> None:
 
 
 WINDOW_TEXT = "Schlüssel hier einfügen"
-MAC_WINDOW = f"""text returned of (display dialog "{WINDOW_TEXT}" with title "hausverwalter Computer" default answer "" with hidden answer buttons {{"Abbrechen", "Speichern"}} default button "Speichern" cancel button "Abbrechen")"""
+MAC_WINDOW = f"""text returned of (display dialog "{WINDOW_TEXT}" with title "hausverwalter.ai Computerbenutzung" default answer "" with hidden answer buttons {{"Abbrechen", "Speichern"}} default button "Speichern" cancel button "Abbrechen")"""
 WINDOWS_WINDOW = f"""
 Add-Type -AssemblyName System.Windows.Forms
-$f = New-Object System.Windows.Forms.Form; $f.Text = "hausverwalter Computer"; $f.ClientSize = New-Object System.Drawing.Size(400, 110)
+$f = New-Object System.Windows.Forms.Form; $f.Text = "hausverwalter.ai Computerbenutzung"; $f.ClientSize = New-Object System.Drawing.Size(400, 110)
 $f.StartPosition = "CenterScreen"; $f.TopMost = $true; $f.FormBorderStyle = "FixedDialog"; $f.MaximizeBox = $false; $f.MinimizeBox = $false
 $l = New-Object System.Windows.Forms.Label; $l.Text = "{WINDOW_TEXT}"; $l.SetBounds(12, 10, 376, 20)
 $b = New-Object System.Windows.Forms.TextBox; $b.UseSystemPasswordChar = $true; $b.SetBounds(12, 34, 376, 24)

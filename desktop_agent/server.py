@@ -268,7 +268,7 @@ def restart_through_launcher() -> bool:
     """Mac: started from an AI program's shell, the permissions would count for that program, not for our app."""
     if sys.platform != "darwin" or os.environ.get("HV_VIA_STARTSYMBOL") or os.environ.get("HV_PROVIDER", "hausverwalter") != "hausverwalter":
         return False
-    launcher = Path.home() / "Applications" / "hausverwalter Computer.app"
+    launcher = Path.home() / "Applications" / "hausverwalter.ai Computerbenutzung.app"
     if not launcher.exists():
         return False
     subprocess.run(["open", str(launcher)], check=False)

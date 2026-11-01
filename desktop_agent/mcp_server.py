@@ -31,7 +31,7 @@ URL = "http://127.0.0.1:8765"
 PROTOCOL_VERSION = "2025-06-18"
 MAX_WAIT_SECONDS = 50
 START_WAIT_SECONDS = 25
-MAC_LAUNCHER = Path.home() / "Applications" / "hausverwalter Computer.app"
+MAC_LAUNCHER = Path.home() / "Applications" / "hausverwalter.ai Computerbenutzung.app"
 VERSION = "0.2.0"  # same as agent.VERSION (this file imports nothing heavy)
 
 TEXT = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
@@ -63,11 +63,11 @@ TOOLS = [
 ]
 NOT_RUNNING = "Der Computer-Assistent startet nicht. Nicht den Nutzer bitten: Rufe das Werkzeug in einer Minute noch einmal auf, dann Fehler an den hausverwalter.ai-Support melden."
 INSTALL_COMMAND = (
-    '$env:HV_KI = "1"; irm https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.ps1 | iex'
+    '$env:HV_KI = "1"; irm https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung/main/install.ps1 | iex'
     if sys.platform == "win32"
-    else "curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.sh | HV_KI=1 bash"
+    else "curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung/main/install.sh | HV_KI=1 bash"
 )
-NOT_INSTALLED = f"hausverwalter Computer ist nicht installiert. Selbst installieren, Befehl selbst ausführen: {INSTALL_COMMAND}"
+NOT_INSTALLED = f"hausverwalter.ai Computerbenutzung ist nicht installiert. Selbst installieren, Befehl selbst ausführen: {INSTALL_COMMAND}"
 KEY_MISSING = (
     "Noch kein Schlüssel. Schreib dem Nutzer zuerst wörtlich auf Deutsch, nicht übersetzen: „Fertig installiert. Damit das Programm für dich arbeiten darf, braucht es einen Schlüssel aus hausverwalter.ai. "
     "Ich öffne dir jetzt die Seite in <Name deines Standard-Browsers, z. B. Google Chrome>: Klick dort auf „Erstellen“ und dann auf „Kopieren“. Füge ihn nicht hier im Chat ein, schreib mir nur „fertig“.“ "

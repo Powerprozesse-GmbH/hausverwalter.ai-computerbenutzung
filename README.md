@@ -1,4 +1,4 @@
-# hausverwalter Computer
+# hausverwalter.ai Computerbenutzung
 
 Die KI bedient Ihren Computer. Sie schreiben, was erledigt werden soll, zum Beispiel „Buche die Rechnung von Firma Müller in PowerHaus“, und der Assistent klickt und tippt selbst. Das klappt auch in Programmen auf dem Terminalserver (Remotedesktop, Citrix), denn er arbeitet mit dem, was auf dem Bildschirm zu sehen ist.
 
@@ -34,13 +34,13 @@ Am einfachsten bitten Sie Ihren KI-Agenten (zum Beispiel OpenCode oder Hermes), 
 **Mac:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung/main/install.sh | bash
 ```
 
 **Windows:**
 
 ```powershell
-irm https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung/main/install.ps1 | iex
 ```
 
 Was dabei passiert:
@@ -48,7 +48,7 @@ Was dabei passiert:
 1. Python wird in Ihren Benutzerordner geladen (über das Werkzeug „uv“), ohne Administratorrechte und ohne Ihr System zu verändern.
 2. Das Programm kommt nach `~/Library/Application Support/hausverwalter-computer` (Mac) bzw. `%LOCALAPPDATA%\hausverwalter-computer` (Windows).
 3. Ein kleines Fenster fragt nach Ihrem API-Schlüssel. Die Eingabe ist verdeckt, auch Ihr KI-Agent sieht den Schlüssel nicht.
-4. Es entsteht das Programm „hausverwalter Computer“ (Mac: Ordner „Programme“ in Ihrem Benutzerordner, Windows: Startmenü). Es läuft ohne eigenes Fenster.
+4. Es entsteht das Programm „hausverwalter.ai Computerbenutzung“ (Mac: Ordner „Programme“ in Ihrem Benutzerordner, Windows: Startmenü). Es läuft ohne eigenes Fenster.
 5. Ihr KI-Agent wird eingetragen (OpenCode, Claude-App, Claude Code, falls vorhanden), und der Assistent startet.
 6. Nur Mac: Der Assistent öffnet nacheinander **Bildschirmaufnahme** und **Bedienungshilfen** und sagt Ihnen, welchen Schalter Sie einschalten. Danach macht er von selbst weiter.
 
@@ -56,7 +56,7 @@ Zum Aktualisieren den Befehl einfach noch einmal ausführen. Der Schlüssel blei
 
 ## Starten und bedienen
 
-1. Starten: Doppelklick auf **hausverwalter Computer** (Mac) bzw. Startmenü › **hausverwalter Computer** (Windows). Ihr KI-Agent startet es sonst von selbst.
+1. Starten: Doppelklick auf **hausverwalter.ai Computerbenutzung** (Mac) bzw. Startmenü › **hausverwalter.ai Computerbenutzung** (Windows). Ihr KI-Agent startet es sonst von selbst.
 2. Sie sprechen nur mit Ihrem KI-Agenten: Er gibt dem Assistenten die Aufträge.
 3. Während er arbeitet, können Sie Ihrem KI-Agenten weiter schreiben: Korrekturen („nimm die andere Rechnung“) oder Fragen („was machst du gerade?“).
 4. Oben auf dem Bildschirm sehen Sie die Leiste:
@@ -116,8 +116,8 @@ Unter Windows heißt der Python-Pfad `<Installationsordner>\venv\Scripts\python.
 ## Schlüssel ändern oder entfernen
 
 - Neuer Schlüssel: Installationsbefehl erneut ausführen, vorher `HV_NEUER_SCHLUESSEL=1` setzen.
-  Mac: `curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.sh | HV_NEUER_SCHLUESSEL=1 bash`
-  Windows: `$env:HV_NEUER_SCHLUESSEL = "1"; irm https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.ps1 | iex`
+  Mac: `curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung/main/install.sh | HV_NEUER_SCHLUESSEL=1 bash`
+  Windows: `$env:HV_NEUER_SCHLUESSEL = "1"; irm https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung/main/install.ps1 | iex`
 - Schlüssel löschen: `<Python> <Installationsordner>/app/desktop_agent/api_key.py loeschen`
 - Deinstallieren: Schlüssel löschen, dann den Installationsordner und das Startsymbol löschen.
 

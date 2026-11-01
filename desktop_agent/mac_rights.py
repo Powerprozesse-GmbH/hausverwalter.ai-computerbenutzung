@@ -50,7 +50,7 @@ def read_status() -> tuple[str, str] | None:
 
 
 def host_app() -> str:
-    return "hausverwalter Computer"
+    return "hausverwalter.ai Computerbenutzung"
 
 
 def screen_ok() -> bool:
@@ -105,7 +105,7 @@ def main() -> int:
     try:
         for step in steps:
             if not wait_for(*step):
-                print(f"„{step[0]}“ wurde nicht eingeschaltet. Zum erneuten Versuch „hausverwalter Computer“ starten.")
+                print(f"„{step[0]}“ wurde nicht eingeschaltet. Zum erneuten Versuch „hausverwalter.ai Computerbenutzung“ starten.")
                 return 1
     finally:
         clear_status()

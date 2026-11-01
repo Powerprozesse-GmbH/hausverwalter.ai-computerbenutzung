@@ -1,5 +1,5 @@
-# hausverwalter Computer – Installation unter Windows, ohne Administratorrechte:
-#   irm https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.ps1 | iex
+# hausverwalter.ai Computerbenutzung – Installation unter Windows, ohne Administratorrechte:
+#   irm https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung/main/install.ps1 | iex
 # Legt alles unter %LOCALAPPDATA%\hausverwalter-computer ab (Python 3.12 über uv), fragt den
 # hausverwalter.ai-API-Schlüssel in einem Fenster mit verdeckter Eingabe ab und speichert ihn in der
 # Windows-Anmeldeinformationsverwaltung. Erneut ausführen = aktualisieren; der Schlüssel bleibt
@@ -11,14 +11,14 @@
     $ProgressPreference = "SilentlyContinue"  # Invoke-WebRequest is many times faster without the progress bar
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-    $Repo = "https://github.com/Powerprozesse-GmbH/hausverwalter-computer"
+    $Repo = "https://github.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung"
     $Branch = if ($env:HV_BRANCH) { $env:HV_BRANCH } else { "main" }
     $Base = Join-Path $env:LOCALAPPDATA "hausverwalter-computer"
     $App = Join-Path $Base "app"
     $Venv = Join-Path $Base "venv"
     $Py = Join-Path $Venv "Scripts\python.exe"
     $ApiKey = Join-Path $App "desktop_agent\api_key.py"
-    $Shortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "hausverwalter Computer.lnk"
+    $Shortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "hausverwalter.ai Computerbenutzung.lnk"
 
     function Say([string]$Text) { Write-Host ""; Write-Host "==> $Text" -ForegroundColor Cyan }
 
@@ -26,7 +26,7 @@
         # own small window: the key never shows up in a console, a log or the AI agent that runs this script
         Add-Type -AssemblyName System.Windows.Forms
         $form = New-Object System.Windows.Forms.Form
-        $form.Text = "hausverwalter Computer"
+        $form.Text = "hausverwalter.ai Computerbenutzung"
         $form.ClientSize = New-Object System.Drawing.Size(500, 140)
         $form.StartPosition = "CenterScreen"
         $form.TopMost = $true
@@ -121,7 +121,7 @@
     $link.TargetPath = Join-Path $Venv "Scripts\pythonw.exe"  # no console window
     $link.Arguments = '"' + (Join-Path $App "desktop_agent\server.py") + '"'
     $link.WorkingDirectory = Join-Path $App "desktop_agent"
-    $link.Description = "hausverwalter Computer: die KI bedient diesen PC"
+    $link.Description = "hausverwalter.ai Computerbenutzung: die KI bedient diesen PC"
     $link.Save()
 
     $McpScript = Join-Path $App "desktop_agent\mcp_server.py"
@@ -130,7 +130,7 @@
     if ($LASTEXITCODE -eq 0) { Start-Process $Shortcut }
     $Yaml = { param([string]$Path) "'" + $Path.Replace("'", "''") + "'" }  # single quotes: backslashes stay as they are
     Write-Host ""
-    Write-Host "Fertig, der Assistent startet jetzt. Später starten: Startmenü > „hausverwalter Computer“."
+    Write-Host "Fertig, der Assistent startet jetzt. Später starten: Startmenü > „hausverwalter.ai Computerbenutzung“."
     Write-Host ""
     Write-Host "KI-Agenten: Das Werkzeug „computer_status“ startet ihn von selbst. OpenCode, Claude-App und Claude Code sind eingetragen, falls vorhanden."
     Write-Host "Hermes (%USERPROFILE%\.hermes\config.yaml) von Hand:"

@@ -69,7 +69,7 @@ class MacScreen:
             try:
                 subprocess.run(["screencapture", "-x", "-m", "-C", str(raw)], check=True, capture_output=True)
             except subprocess.CalledProcessError as exc:
-                raise RuntimeError("Keine Bildschirm-Freigabe. Assistent neu über das Startsymbol „hausverwalter Computer“ starten, er fragt dann selbst nach.") from exc
+                raise RuntimeError("Keine Bildschirm-Freigabe. Assistent neu über das Startsymbol „hausverwalter.ai Computerbenutzung“ starten, er fragt dann selbst nach.") from exc
             subprocess.run(
                 ["sips", "-s", "format", "jpeg", "-s", "formatOptions", str(JPEG_QUALITY),
                  "-z", str(self.height), str(self.width), str(raw), "--out", str(small)],
