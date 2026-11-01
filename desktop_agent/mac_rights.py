@@ -86,11 +86,11 @@ def show_dialog(sentence: str) -> subprocess.Popen:
     return subprocess.Popen(["osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def wait_for(name: str, anchor: str, check, ask) -> bool:
+def wait_for(name: str, anchor: str, check, ask, opening: str = "", extra: str = "") -> bool:
     if check():
         return True
     app = host_app()
-    sentence = f"Ich habe dir die Einstellung „{name}“ geöffnet. Bitte den Schalter bei „{app}“ einschalten. Fragt der Mac nach Beenden: „Beenden & erneut öffnen“ klicken."
+    sentence = f"{opening}Ich habe dir „{name}“ geöffnet. Bitte den Schalter bei „{app}“ einschalten und „fertig“ schreiben.{extra}"
     write_status(sentence)
     print(sentence, flush=True)
     ask()
@@ -108,8 +108,8 @@ def wait_for(name: str, anchor: str, check, ask) -> bool:
 
 
 def main() -> int:
-    steps = [("Bildschirmaufnahme", "Privacy_ScreenCapture", screen_ok, ask_screen),
-             ("Bedienungshilfen", "Privacy_Accessibility", access_ok, ask_access)]
+    steps = [("Bildschirmaufnahme", "Privacy_ScreenCapture", screen_ok, ask_screen, "", " Fragt der Mac nach: „Beenden & erneut öffnen“ klicken."),
+             ("Bedienungshilfen", "Privacy_Accessibility", access_ok, ask_access, "Perfekt. ", "")]
     try:
         for step in steps:
             if not wait_for(*step):
