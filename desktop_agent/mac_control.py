@@ -66,7 +66,10 @@ class MacScreen:
         """Base64 JPEG in the model's coordinate space; also reads the screen's texts into last_texts."""
         with tempfile.TemporaryDirectory() as tmp:
             raw, small = Path(tmp, "raw.png"), Path(tmp, "small.jpg")
-            subprocess.run(["screencapture", "-x", "-m", "-C", str(raw)], check=True, capture_output=True)
+            try:
+                subprocess.run(["screencapture", "-x", "-m", "-C", str(raw)], check=True, capture_output=True)
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError("Keine Bildschirm-Freigabe. Assistent neu über das Startsymbol „hausverwalter Computer“ starten, er fragt dann selbst nach.") from exc
             subprocess.run(
                 ["sips", "-s", "format", "jpeg", "-s", "formatOptions", str(JPEG_QUALITY),
                  "-z", str(self.height), str(self.width), str(raw), "--out", str(small)],

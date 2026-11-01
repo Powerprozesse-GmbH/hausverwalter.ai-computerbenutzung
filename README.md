@@ -49,7 +49,8 @@ Was dabei passiert:
 2. Das Programm kommt nach `~/Library/Application Support/hausverwalter-computer` (Mac) bzw. `%LOCALAPPDATA%\hausverwalter-computer` (Windows).
 3. Ein kleines Fenster fragt nach Ihrem API-Schlüssel. Die Eingabe ist verdeckt, auch Ihr KI-Agent sieht den Schlüssel nicht.
 4. Es entsteht ein Startsymbol „hausverwalter Computer“ (Mac: Ordner „Programme“ in Ihrem Benutzerordner, Windows: Startmenü).
-5. Nur Mac: Die Systemeinstellungen öffnen sich. Schalten Sie dort bei **Bildschirmaufnahme** und **Bedienungshilfen** das Programm „Terminal“ ein. Sonst sieht der Assistent den Bildschirm nicht und kann nicht klicken.
+5. Ihr KI-Agent wird eingetragen (OpenCode, Claude-App, Claude Code, falls vorhanden), und der Assistent startet.
+6. Nur Mac: Der Assistent öffnet nacheinander **Bildschirmaufnahme** und **Bedienungshilfen** und sagt Ihnen, welchen Schalter Sie einschalten. Danach macht er von selbst weiter.
 
 Zum Aktualisieren den Befehl einfach noch einmal ausführen. Der Schlüssel bleibt gespeichert.
 
@@ -80,9 +81,9 @@ Der Assistent ist auch ein MCP-Server namens `computer`. So kann Ihr KI-Agent ih
 | `computer_status` | Bis zu 50 Sekunden auf Neues warten: Zustand, neue Schritte, letzte Nachricht |
 | `computer_pause`, `computer_weiter`, `computer_stopp` | Anhalten, weitermachen, abbrechen |
 
-Ablauf für den Agenten: `computer_auftrag` aufrufen, dann `computer_status`, bis er fertig ist oder etwas fragt. Fragen des Assistenten an den Nutzer weitergeben und die Antwort mit `computer_nachricht` zurückschicken. Der Assistent muss dafür laufen (Startsymbol).
+Ablauf für den Agenten: `computer_auftrag` aufrufen, dann `computer_status`, bis er fertig ist oder etwas fragt. Fragen des Assistenten an den Nutzer weitergeben und die Antwort mit `computer_nachricht` zurückschicken. Der Assistent startet von selbst und fragt von selbst nach den Freigaben.
 
-Der Installer zeigt am Ende die fertigen Einträge mit Ihren Pfaden. Aufbau:
+Der Installer trägt OpenCode, die Claude-App und Claude Code selbst ein. Aufbau:
 
 **OpenCode** (`~/.config/opencode/opencode.json`):
 

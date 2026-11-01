@@ -68,12 +68,24 @@ class McpServerTest(unittest.TestCase):
             mcp_server.handle(bridge, _call(i, name, {}))
         self.assertEqual([p[0] for p in bridge.posts], ["/pause", "/resume", "/stop"])
 
-    def test_server_down_is_reported(self):
-        bridge = FakeBridge()
-        bridge._state = lambda since: (_ for _ in ()).throw(urllib.error.URLError("refused"))
+    def test_server_down_not_installed_says_install_yourself(self):
+        bridge = _down_bridge(launched=False)
         reply = mcp_server.handle(bridge, _call(1, "computer_auftrag", {"text": "x"}))["result"]
-        self.assertTrue(reply["isError"])
-        self.assertEqual(reply["content"][0]["text"], mcp_server.NOT_RUNNING)
+        self.assertEqual(reply["content"][0]["text"], mcp_server.NOT_INSTALLED)
+
+    def test_server_down_is_started_and_call_repeated(self):
+        bridge = _down_bridge(launched=True)
+        with mock.patch.object(mcp_server.mac_rights, "read_status", return_value=None):
+            mcp_server.handle(bridge, _call(1, "computer_stopp", {}))
+        self.assertEqual(bridge.launches, 1)
+        self.assertEqual(bridge.posts, [("/stop", {})])
+
+    def test_waiting_for_permission_gives_one_sentence_and_no_second_start(self):
+        bridge = _down_bridge(launched=True)
+        with mock.patch.object(mcp_server.mac_rights, "read_status", return_value="Bitte den Schalter einschalten."):
+            text = mcp_server.handle(bridge, _call(1, "computer_status", {"warte_sekunden": 0}))["result"]["content"][0]["text"]
+        self.assertIn("Bitte den Schalter einschalten.", text)
+        self.assertEqual(bridge.launches, 0)
 
     def test_unknown_method(self):
         reply = mcp_server.handle(FakeBridge(), {"jsonrpc": "2.0", "id": 9, "method": "resources/list"})
@@ -112,6 +124,26 @@ class TokenTest(unittest.TestCase):
             reply = mcp_server.handle(mcp_server.Bridge("http://test"), _call(1, "computer_stopp", {}))["result"]
         self.assertTrue(reply["isError"])
         self.assertEqual(reply["content"][0]["text"], mcp_server.REFUSED)
+
+
+def _down_bridge(launched):
+    """Server down until _launch was called."""
+    bridge = FakeBridge()
+    bridge.launches, real_state, real_post = 0, bridge._state, bridge._post
+
+    def launch():
+        bridge.launches += 1
+        return launched
+
+    def guarded(real):
+        def inner(*args):
+            if not bridge.launches:
+                raise urllib.error.URLError("refused")
+            return real(*args)
+        return inner
+
+    bridge._launch, bridge._state, bridge._post = launch, guarded(real_state), guarded(real_post)
+    return bridge
 
 
 def _call(msg_id, name, arguments):

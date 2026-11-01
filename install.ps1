@@ -118,19 +118,14 @@
     $link.Save()
 
     $McpScript = Join-Path $App "desktop_agent\mcp_server.py"
-    $OpenCode = @{ mcp = @{ servers = @{ computer = @{
-        type = "local"; command = @($Py, $McpScript); timeout = @{ startup = 90000; catalog = 90000; execution = 90000 }
-    } } } } | ConvertTo-Json -Depth 6
+    & $Py (Join-Path $App "desktop_agent\mcp_eintragen.py") $Py $McpScript
+    Start-Process $Shortcut
     $Yaml = { param([string]$Path) "'" + $Path.Replace("'", "''") + "'" }  # single quotes: backslashes stay as they are
     Write-Host ""
-    Write-Host "Fertig. Starten: Startmenü > „hausverwalter Computer“. Oben auf dem Bildschirm erscheint dann eine Leiste mit Pause und Stopp."
+    Write-Host "Fertig, der Assistent startet jetzt. Später starten: Startmenü > „hausverwalter Computer“."
     Write-Host ""
-    Write-Host "Für KI-Agenten (MCP-Server „computer“), Eintrag in der Konfiguration ergänzen:"
-    Write-Host ""
-    Write-Host "OpenCode (%USERPROFILE%\.config\opencode\opencode.json):"
-    Write-Host $OpenCode
-    Write-Host ""
-    Write-Host "Hermes (%USERPROFILE%\.hermes\config.yaml):"
+    Write-Host "KI-Agenten: Das Werkzeug „computer_status“ startet ihn von selbst. OpenCode, Claude-App und Claude Code sind eingetragen, falls vorhanden."
+    Write-Host "Hermes (%USERPROFILE%\.hermes\config.yaml) von Hand:"
     Write-Host "mcp_servers:"
     Write-Host "  computer:"
     Write-Host ("    command: " + (& $Yaml $Py))

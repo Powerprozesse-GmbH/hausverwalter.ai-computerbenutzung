@@ -264,7 +264,20 @@ def start_overlay() -> None:
     atexit.register(overlay.terminate)
 
 
+def restart_through_launcher() -> bool:
+    """Mac: started from an AI program's shell, the permissions would count for that program, not for Terminal."""
+    if sys.platform != "darwin" or os.environ.get("HV_VIA_STARTSYMBOL") or os.environ.get("HV_PROVIDER", "hausverwalter") != "hausverwalter":
+        return False
+    launcher = Path.home() / "Applications" / "hausverwalter Computer.command"
+    if not launcher.exists():
+        return False
+    subprocess.run(["open", str(launcher)], check=False)
+    return True
+
+
 def main() -> None:
+    if restart_through_launcher():
+        return
     try:
         state = State(make_session)
     except agent.MissingKey as exc:

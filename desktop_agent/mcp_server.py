@@ -2,8 +2,8 @@
 screen work to the desktop assistant and talk to it while it works.
 
 The user keeps chatting with their own agent; that agent forwards tasks and messages
-here and reads back what the assistant does and asks. Needs server.py running (start entry
-„hausverwalter Computer“). Every request carries the server's per-start token (local_auth.py,
+here and reads back what the assistant does and asks. Starts server.py by itself when it is not
+running (Mac: through the start entry, so Terminal holds the permissions). Every request carries the server's per-start token (local_auth.py,
 read from the user-only file). No dependencies: JSON-RPC 2.0, one message per line.
 
 OpenCode (~/.config/opencode/opencode.json):
@@ -16,16 +16,22 @@ Hermes (~/.hermes/config.yaml):
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import local_auth
+import mac_rights
 
 URL = "http://127.0.0.1:8765"
 PROTOCOL_VERSION = "2025-06-18"
 MAX_WAIT_SECONDS = 50
+START_WAIT_SECONDS = 25
+MAC_LAUNCHER = Path.home() / "Applications" / "hausverwalter Computer.command"
 VERSION = "0.2.0"  # same as agent.VERSION (this file imports nothing heavy)
 
 TEXT = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
@@ -35,7 +41,8 @@ TOOLS = [
         "name": "computer_auftrag",
         "description": "Gibt dem Computer-Assistenten einen Auftrag, den er am Bildschirm erledigt: klicken, tippen, Programme bedienen "
         "(z. B. PowerHaus, Fernzugriff, Browser). Er arbeitet im Hintergrund weiter. Danach computer_status aufrufen, bis er fertig ist "
-        "oder etwas fragt. Läuft schon ein Auftrag, geht der Text als Nachricht an ihn.",
+        "oder etwas fragt. Läuft schon ein Auftrag, geht der Text als Nachricht an ihn. Startet sich selbst und prüft die Mac-Freigaben selbst: "
+        "Einfach aufrufen. Nie den Nutzer bitten, etwas zu starten. Nie Freigaben aus deiner eigenen Shell testen, nie Freigaben für dein eigenes Programm verlangen.",
         "inputSchema": TEXT,
     },
     {
@@ -54,8 +61,13 @@ TOOLS = [
     {"name": "computer_weiter", "description": "Lässt den pausierten Computer-Assistenten weiterarbeiten.", "inputSchema": NONE},
     {"name": "computer_stopp", "description": "Bricht den aktuellen Auftrag des Computer-Assistenten ab.", "inputSchema": NONE},
 ]
-NOT_RUNNING = "Der Computer-Assistent läuft nicht. Bitte „hausverwalter Computer“ starten (Startmenü bzw. Programme)."
-REFUSED = "Der Computer-Assistent hat die Anfrage abgelehnt (Zugangs-Token passt nicht). Bitte „hausverwalter Computer“ neu starten."
+NOT_RUNNING = "Der Computer-Assistent startet nicht. Nicht den Nutzer bitten: Rufe das Werkzeug in einer Minute noch einmal auf, dann Fehler an den hausverwalter.ai-Support melden."
+NOT_INSTALLED = (
+    "hausverwalter Computer ist nicht installiert. Selbst installieren, Befehl selbst ausführen: "
+    "curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.sh | bash"
+)
+WAITING = "Der Computer-Assistent wartet auf eine Freigabe. Schreibe dem Nutzer genau diesen Satz, nichts sonst, keine weiteren Schritte: „{}“ Rufe danach computer_status auf, er macht von selbst weiter."
+REFUSED = "Der Computer-Assistent hat die Anfrage abgelehnt (Zugangs-Token passt nicht). Nicht den Nutzer bitten: In einer Minute noch einmal versuchen."
 
 
 class Bridge:
@@ -66,6 +78,41 @@ class Bridge:
         self.seen: int | None = None
 
     def call(self, name: str, args: dict) -> str:
+        try:
+            return self._call(name, args)
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, OSError):
+            problem = self._start()
+            return problem if problem else self._call(name, args)
+
+    def _start(self) -> str | None:
+        """Starts the assistant and waits for it. Returns the text for the agent if it cannot go on yet."""
+        if not mac_rights.read_status() and not self._launch():
+            return NOT_INSTALLED
+        deadline = time.time() + START_WAIT_SECONDS
+        while time.time() < deadline:
+            sentence = mac_rights.read_status()
+            if sentence:
+                return WAITING.format(sentence)
+            try:
+                self._state(None)
+                return None
+            except (urllib.error.URLError, OSError):
+                time.sleep(1)
+        return NOT_RUNNING
+
+    def _launch(self) -> bool:
+        if sys.platform == "win32":
+            folder = Path(__file__).resolve().parent
+            subprocess.Popen([sys.executable, str(folder / "server.py")], cwd=folder, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            return True
+        if not MAC_LAUNCHER.exists():
+            return False
+        subprocess.run(["open", str(MAC_LAUNCHER)], check=False)
+        return True
+
+    def _call(self, name: str, args: dict) -> str:
         if name in ("computer_auftrag", "computer_nachricht"):
             if self.seen is None:
                 self.seen = self._state(None)["total"]  # report from this task on, not older history
@@ -130,7 +177,7 @@ def handle(bridge: Bridge, message: dict) -> dict | None:
         except urllib.error.HTTPError as exc:
             text, failed = (REFUSED if exc.code in (401, 403) else f"Fehler des Assistenten: HTTP {exc.code}"), True
         except (urllib.error.URLError, OSError):
-            text, failed = NOT_RUNNING, True
+            text, failed = NOT_RUNNING, True  # started, but gone again
         result = {"content": [{"type": "text", "text": text}], "isError": failed}
     else:
         return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": f"Method not found: {method}"}}

@@ -21,6 +21,7 @@ say() { printf '\n==> %s\n' "$1"; }
 main() {
   [ "$(uname -s)" = Darwin ] || { echo "Dieses Skript ist für macOS. Unter Windows: install.ps1"; exit 1; }
   mkdir -p "$BASE" "$HOME/Applications"
+  lsof -ti tcp:8765 | xargs kill 2>/dev/null || true  # an update replaces the running program
 
   say "1/5 uv einrichten (lädt Python, ohne Administratorrechte)"
   UV="$(command -v uv || true)"
@@ -57,36 +58,21 @@ main() {
 #!/bin/bash
 # Startet den hausverwalter Computer. Fenster offen lassen, solange er arbeiten soll; Schließen beendet ihn.
 cd "$APP/desktop_agent"
-export HV_PROVIDER=hausverwalter
+export HV_PROVIDER=hausverwalter HV_VIA_STARTSYMBOL=1
+"$PY" mac_rights.py || exit 1
 exec "$PY" server.py
 EOF
   chmod +x "$LAUNCHER"
-  open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture" || true
-  open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" || true
-  open -R "$LAUNCHER" || true
-  echo "Bitte in beiden geöffneten Einstellungen „Terminal“ einschalten (fehlt es: mit + aus Programme › Dienstprogramme hinzufügen), damit der Assistent den Bildschirm sehen und Maus und Tastatur bedienen darf."
+  "$PY" "$APP/desktop_agent/mcp_eintragen.py" "$PY" "$APP/desktop_agent/mcp_server.py" || true
+  open "$LAUNCHER"
 
   cat <<EOF
 
-Fertig. Starten: Doppelklick auf „hausverwalter Computer“ (Ordner Programme in Ihrem Benutzerordner).
-Oben auf dem Bildschirm erscheint dann eine Leiste mit Pause und Stopp.
+Fertig, der Assistent startet jetzt und fragt selbst nach den zwei Mac-Freigaben, eine nach der anderen.
+Später starten: Doppelklick auf „hausverwalter Computer“ (Ordner Programme in Ihrem Benutzerordner).
 
-Für KI-Agenten (MCP-Server „computer“), Eintrag in der Konfiguration ergänzen:
-
-OpenCode (~/.config/opencode/opencode.json):
-{
-  "mcp": {
-    "servers": {
-      "computer": {
-        "type": "local",
-        "command": ["$PY", "$APP/desktop_agent/mcp_server.py"],
-        "timeout": {"startup": 90000, "catalog": 90000, "execution": 90000}
-      }
-    }
-  }
-}
-
-Hermes (~/.hermes/config.yaml):
+KI-Agenten: Das Werkzeug „computer_status“ startet ihn von selbst. OpenCode, Claude-App und Claude Code sind eingetragen, falls vorhanden.
+Hermes (~/.hermes/config.yaml) von Hand:
 mcp_servers:
   computer:
     command: "$PY"
