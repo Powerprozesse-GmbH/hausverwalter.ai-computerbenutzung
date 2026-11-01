@@ -80,28 +80,21 @@ main() {
   fi
 
   say "5/5 Startsymbol anlegen"
-  # A real app without a window: no Terminal window, and the Mac settings list it by its own name.
+  # A real app (applet from macOS itself), not a script: only then the Mac settings list it by its own name.
   rm -rf "$LAUNCHER" "$HOME/Applications/hausverwalter Computer.command"
-  mkdir -p "$LAUNCHER/Contents/MacOS"
-  cat > "$LAUNCHER/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>ai.hausverwalter.computer</string>
-<key>CFBundleName</key><string>hausverwalter Computer</string>
-<key>CFBundleExecutable</key><string>start</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>LSUIElement</key><true/>
-</dict></plist>
-EOF
-  cat > "$LAUNCHER/Contents/MacOS/start" <<EOF
+  cat > "$BASE/start.sh" <<EOF
 #!/bin/bash
 cd "$APP/desktop_agent"
 export HV_PROVIDER=hausverwalter HV_VIA_STARTSYMBOL=1
 "$PY" mac_rights.py >> "$BASE/programm.log" 2>&1 || exit 1
 "$PY" server.py >> "$BASE/programm.log" 2>&1
 EOF
-  chmod +x "$LAUNCHER/Contents/MacOS/start"
+  chmod +x "$BASE/start.sh"
+  osacompile -o "$LAUNCHER" -e "do shell script quoted form of \"$BASE/start.sh\""
+  /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$LAUNCHER/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ai.hausverwalter.computer" "$LAUNCHER/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string ai.hausverwalter.computer" "$LAUNCHER/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName hausverwalter Computer" "$LAUNCHER/Contents/Info.plist"
   codesign --force --deep -s - "$LAUNCHER" >/dev/null 2>&1 || true
   "$PY" "$APP/desktop_agent/mcp_eintragen.py" "$PY" "$APP/desktop_agent/mcp_server.py" || true
   if "$PY" "$APP/desktop_agent/api_key.py" pruefen >/dev/null 2>&1; then open "$LAUNCHER"; fi
