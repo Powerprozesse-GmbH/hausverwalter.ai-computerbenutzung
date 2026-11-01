@@ -23,7 +23,6 @@ SETTINGS = "x-apple.systempreferences:com.apple.preference.security?"
 STATUS_FILE = "rechte-status"
 MAX_WAIT_SECONDS = 600
 POLL_SECONDS = 2
-DIALOG_SECONDS = 15
 
 
 def status_path() -> Path:
@@ -83,35 +82,26 @@ def ask_access() -> None:
     services.AXIsProcessTrustedWithOptions(options)
 
 
-def show_dialog(sentence: str) -> subprocess.Popen:
-    script = f'display dialog "{sentence}" with title "hausverwalter Computer" buttons {{"OK"}} default button "OK" giving up after {DIALOG_SECONDS}'
-    return subprocess.Popen(["osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-
 def wait_for(name: str, anchor: str, check, ask, opening: str = "", extra: str = "") -> bool:
     if check():
         return True
     app = host_app()
-    sentence = f"{opening}Ich habe dir „{name}“ geöffnet. Bitte den Schalter bei „{app}“ einschalten und „fertig“ schreiben.{extra}"
+    sentence = f"{opening}Ich habe dir die Einstellung „{name}“ geöffnet. Schalte dort den Schalter bei „{app}“ ein und schreib mir „fertig“.{extra}"
     write_status(sentence)
     print(sentence, flush=True)
     ask()
     subprocess.run(["open", SETTINGS + anchor], check=False)
-    dialog = show_dialog(sentence.replace('"', "'"))
     deadline = time.time() + MAX_WAIT_SECONDS
-    try:
-        while time.time() < deadline:
-            if check():
-                return True
-            time.sleep(POLL_SECONDS)
-    finally:
-        dialog.terminate()
+    while time.time() < deadline:
+        if check():
+            return True
+        time.sleep(POLL_SECONDS)
     return False
 
 
 def main() -> int:
-    steps = [("Bildschirmaufnahme", "Privacy_ScreenCapture", screen_ok, ask_screen, "", " Fragt der Mac nach: „Beenden & erneut öffnen“ klicken."),
-             ("Bedienungshilfen", "Privacy_Accessibility", access_ok, ask_access, "Perfekt. ", "")]
+    steps = [("Bildschirmaufnahme", "Privacy_ScreenCapture", screen_ok, ask_screen, "Damit ich deinen Bildschirm sehen kann, brauche ich eine Erlaubnis vom Mac. ", " Fragt der Mac nach: „Beenden & erneut öffnen“ klicken."),
+             ("Bedienungshilfen", "Privacy_Accessibility", access_ok, ask_access, "Perfekt. Damit ich Maus und Tastatur bewegen kann, brauche ich noch eine Erlaubnis. ", "")]
     try:
         for step in steps:
             if not wait_for(*step):

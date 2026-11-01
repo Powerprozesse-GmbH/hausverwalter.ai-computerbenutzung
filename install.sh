@@ -64,6 +64,8 @@ main() {
   say "4/5 hausverwalter.ai-API-Schlüssel"
   if [ -z "${HV_NEUER_SCHLUESSEL:-}" ] && "$PY" "$APP/desktop_agent/api_key.py" pruefen >/dev/null 2>&1; then
     echo "Schlüssel ist schon gespeichert."
+  elif [ -n "${HV_KI:-}" ]; then
+    echo "Noch kein Schlüssel: Die KI fragt im Chat danach."
   else
     open "$KEY_URL" || true
     sleep 2
@@ -88,7 +90,7 @@ exec "$PY" server.py
 EOF
   chmod +x "$LAUNCHER"
   "$PY" "$APP/desktop_agent/mcp_eintragen.py" "$PY" "$APP/desktop_agent/mcp_server.py" || true
-  open "$LAUNCHER"
+  if "$PY" "$APP/desktop_agent/api_key.py" pruefen >/dev/null 2>&1; then open "$LAUNCHER"; fi
 
   cat <<EOF
 

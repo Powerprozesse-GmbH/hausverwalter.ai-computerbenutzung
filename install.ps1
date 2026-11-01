@@ -98,6 +98,8 @@
     & $Py $ApiKey pruefen | Out-Null
     if ($LASTEXITCODE -eq 0 -and -not $env:HV_NEUER_SCHLUESSEL) {
         Write-Host "Schlüssel ist schon gespeichert."
+    } elseif ($env:HV_KI) {
+        Write-Host "Noch kein Schlüssel: Die KI fragt im Chat danach."
     } else {
         Start-Process $(if ($env:HV_KEY_URL) { $env:HV_KEY_URL } else { "https://app.hausverwalter.ai/settings/api-keys" })
         Start-Sleep -Seconds 2
@@ -121,7 +123,8 @@
 
     $McpScript = Join-Path $App "desktop_agent\mcp_server.py"
     & $Py (Join-Path $App "desktop_agent\mcp_eintragen.py") $Py $McpScript
-    Start-Process $Shortcut
+    & $Py $ApiKey pruefen | Out-Null
+    if ($LASTEXITCODE -eq 0) { Start-Process $Shortcut }
     $Yaml = { param([string]$Path) "'" + $Path.Replace("'", "''") + "'" }  # single quotes: backslashes stay as they are
     Write-Host ""
     Write-Host "Fertig, der Assistent startet jetzt. Später starten: Startmenü > „hausverwalter Computer“."

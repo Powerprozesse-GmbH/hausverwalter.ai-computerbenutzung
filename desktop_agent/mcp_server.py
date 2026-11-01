@@ -64,7 +64,13 @@ TOOLS = [
 NOT_RUNNING = "Der Computer-Assistent startet nicht. Nicht den Nutzer bitten: Rufe das Werkzeug in einer Minute noch einmal auf, dann Fehler an den hausverwalter.ai-Support melden."
 NOT_INSTALLED = (
     "hausverwalter Computer ist nicht installiert. Selbst installieren, Befehl selbst ausführen: "
-    "curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.sh | bash"
+    "curl -fsSL https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter-computer/main/install.sh | HV_KI=1 bash"
+)
+KEY_MISSING = (
+    "Noch kein Schlüssel. Schreib dem Nutzer zuerst genau: „Fertig installiert. Damit das Programm für dich arbeiten darf, braucht es einen Schlüssel aus hausverwalter.ai. "
+    "Ich öffne dir jetzt die Seite im Browser: Klick dort auf „Erstellen“ und dann auf „Kopieren“. Füge ihn nicht hier im Chat ein, schreib mir nur „fertig“.“ "
+    "Öffne erst dann die Seite aus getSetupLink target api_keys. Warte. Nach „fertig“ schreib zuerst genau: „Perfekt. Jetzt öffnet sich ein kleines Fenster: "
+    "Füge den Schlüssel dort ein und klick auf „Speichern“.“ Führe erst dann selbst aus: {} fenster . Danach computer_status."
 )
 WAITING = "Der Computer-Assistent wartet auf eine Freigabe. Schreibe dem Nutzer genau diesen Satz, nichts sonst, keine weiteren Schritte: „{}“ Rufe danach computer_status auf, er macht von selbst weiter."
 REFUSED = "Der Computer-Assistent hat die Anfrage abgelehnt (Zugangs-Token passt nicht). Nicht den Nutzer bitten: In einer Minute noch einmal versuchen."
@@ -88,8 +94,11 @@ class Bridge:
 
     def _start(self) -> str | None:
         """Starts the assistant and waits for it. Returns the text for the agent if it cannot go on yet."""
-        if not mac_rights.read_status() and not self._launch():
-            return NOT_INSTALLED
+        if not mac_rights.read_status():
+            if not self._key_saved():
+                return KEY_MISSING.format(f'"{sys.executable}" "{Path(__file__).with_name("api_key.py")}"')
+            if not self._launch():
+                return NOT_INSTALLED
         deadline = time.time() + START_WAIT_SECONDS
         while time.time() < deadline:
             sentence = mac_rights.read_status()
@@ -101,6 +110,10 @@ class Bridge:
             except (urllib.error.URLError, OSError):
                 time.sleep(1)
         return NOT_RUNNING
+
+    def _key_saved(self) -> bool:
+        check = [sys.executable, str(Path(__file__).with_name("api_key.py")), "pruefen"]
+        return subprocess.run(check, capture_output=True).returncode == 0
 
     def _launch(self) -> bool:
         if sys.platform == "win32":

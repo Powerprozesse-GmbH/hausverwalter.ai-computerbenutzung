@@ -73,6 +73,15 @@ class McpServerTest(unittest.TestCase):
         reply = mcp_server.handle(bridge, _call(1, "computer_auftrag", {"text": "x"}))["result"]
         self.assertEqual(reply["content"][0]["text"], mcp_server.NOT_INSTALLED)
 
+    def test_no_key_tells_the_agent_what_to_say_and_starts_nothing(self):
+        bridge = _down_bridge(launched=True)
+        bridge._key_saved = lambda: False
+        with mock.patch.object(mcp_server.mac_rights, "read_status", return_value=None):
+            text = mcp_server.handle(bridge, _call(1, "computer_status", {"warte_sekunden": 0}))["result"]["content"][0]["text"]
+        self.assertIn("api_key.py", text)
+        self.assertIn("fenster", text)
+        self.assertEqual(bridge.launches, 0)
+
     def test_server_down_is_started_and_call_repeated(self):
         bridge = _down_bridge(launched=True)
         with mock.patch.object(mcp_server.mac_rights, "read_status", return_value=None):
@@ -143,6 +152,7 @@ def _down_bridge(launched):
         return inner
 
     bridge._launch, bridge._state, bridge._post = launch, guarded(real_state), guarded(real_post)
+    bridge._key_saved = lambda: True
     return bridge
 
 
