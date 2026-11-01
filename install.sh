@@ -15,9 +15,26 @@ VENV="$BASE/venv"
 PY="$VENV/bin/python"
 LAUNCHER="$HOME/Applications/hausverwalter Computer.command"
 KEY_URL="${HV_KEY_URL:-https://app.hausverwalter.ai/settings/api-keys}"
-KEY_PROMPT='Ich habe die Schlüssel-Seite von hausverwalter.ai geöffnet. Klick dort auf „Erstellen“ und „Kopieren“ und füge den Schlüssel hier ein.'
+KEY_HINT='Ich habe die Schlüssel-Seite von hausverwalter.ai geöffnet. Klick dort auf „Erstellen“ und „Kopieren“. Danach geht es von selbst weiter.'
+KEY_PROMPT='Perfekt. Füge den Schlüssel jetzt hier ein (⌘V) und klick auf „Speichern“.'
 
 say() { printf '\n==> %s\n' "$1"; }
+
+clipboard_id() { pbpaste 2>/dev/null | shasum; }
+
+# The key window must come up only after the copy: clicking the browser would hide a window that is already open.
+wait_for_copied_key() {
+  local before tries=0 hint
+  before="$(clipboard_id)"
+  osascript -e activate -e "display dialog \"$KEY_HINT\" with title \"hausverwalter Computer\" buttons {\"OK\"} default button \"OK\" giving up after 10" >/dev/null 2>&1 &
+  hint=$!
+  while [ "$tries" -lt 600 ]; do
+    if [ "$(clipboard_id)" != "$before" ] && pbpaste 2>/dev/null | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]{16,}$'; then break; fi
+    sleep 1
+    tries=$((tries + 1))
+  done
+  kill "$hint" 2>/dev/null || true
+}
 
 main() {
   [ "$(uname -s)" = Darwin ] || { echo "Dieses Skript ist für macOS. Unter Windows: install.ps1"; exit 1; }
@@ -50,6 +67,7 @@ main() {
   else
     open "$KEY_URL" || true
     sleep 2
+    wait_for_copied_key
     # hidden dialog: the key never shows up in a terminal, a log or the AI agent that runs this script
     until
       KEY="$(osascript -e activate -e "text returned of (display dialog \"$KEY_PROMPT\" with title \"hausverwalter Computer\" default answer \"\" with hidden answer buttons {\"Abbrechen\", \"Speichern\"} default button \"Speichern\" cancel button \"Abbrechen\")")" \
