@@ -1,0 +1,12 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+# never commit local data: metering, screenshots, tokens, keys
+*.sqlite
+*.jpg
+*.jpeg
+*.png
+server-token
+.env

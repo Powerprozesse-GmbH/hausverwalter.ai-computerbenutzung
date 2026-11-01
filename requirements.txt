@@ -1,0 +1,16 @@
+# hausverwalter Computer: what the installers put into the venv (uv pip install -r requirements.txt).
+# Internal providers (bedrock, vertex, azure, tensorx) need the extra "intern" from pyproject.toml.
+anthropic>=2.3,<3
+keyring>=25
+pyobjc-framework-Cocoa>=10; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10; sys_platform == "darwin"
+pyobjc-framework-Vision>=10; sys_platform == "darwin"
+mss>=9; sys_platform == "win32"
+pillow>=10; sys_platform == "win32"
+winrt-runtime>=2; sys_platform == "win32"
+winrt-Windows.Foundation>=2; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=2; sys_platform == "win32"
+winrt-Windows.Globalization>=2; sys_platform == "win32"
+winrt-Windows.Graphics.Imaging>=2; sys_platform == "win32"
+winrt-Windows.Media.Ocr>=2; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=2; sys_platform == "win32"
