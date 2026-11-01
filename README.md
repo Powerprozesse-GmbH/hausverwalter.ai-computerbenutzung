@@ -5,9 +5,6 @@ Die KI bedient Ihren Computer. Sie schreiben, was erledigt werden soll, zum Beis
 Sie sehen jeden Schritt: Ein roter Rahmen leuchtet am Bildschirmrand, oben steht, was er gerade tut, und Sie können jederzeit **Pause** oder **Stopp** drücken.
 
 Für Mac und Windows. Teil von [hausverwalter.ai](https://hausverwalter.ai).
-
-> **Stand: Vorschau.** Die Abrechnung über hausverwalter.ai wird gerade freigeschaltet. Bis dahin meldet der Assistent beim ersten Auftrag einen Fehler.
-
 ## Was er macht
 
 - Er macht ein Bildschirmfoto, Claude (die KI von Anthropic) entscheidet den nächsten Schritt, dann bewegt er Maus und Tastatur.
