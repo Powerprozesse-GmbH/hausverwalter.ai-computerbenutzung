@@ -68,7 +68,7 @@ NOT_INSTALLED = (
 )
 KEY_MISSING = (
     "Noch kein Schlüssel. Schreib dem Nutzer zuerst genau: „Fertig installiert. Damit das Programm für dich arbeiten darf, braucht es einen Schlüssel aus hausverwalter.ai. "
-    "Ich öffne dir jetzt die Seite im Browser: Klick dort auf „Erstellen“ und dann auf „Kopieren“. Füge ihn nicht hier im Chat ein, schreib mir nur „fertig“.“ "
+    "Ich öffne dir jetzt die Seite in <Name deines Standard-Browsers, z. B. Google Chrome>: Klick dort auf „Erstellen“ und dann auf „Kopieren“. Füge ihn nicht hier im Chat ein, schreib mir nur „fertig“.“ "
     "Öffne erst dann die Seite aus getSetupLink target api_keys. Warte. Nach „fertig“ schreib zuerst genau: „Perfekt. Jetzt öffnet sich ein kleines Fenster: "
     "Füge den Schlüssel dort ein und klick auf „Speichern“.“ Führe erst dann selbst aus: {} fenster . Danach computer_status."
 )
