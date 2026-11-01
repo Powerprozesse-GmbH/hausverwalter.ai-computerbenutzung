@@ -91,9 +91,10 @@ class McpServerTest(unittest.TestCase):
 
     def test_waiting_for_permission_gives_one_sentence_and_no_second_start(self):
         bridge = _down_bridge(launched=True)
-        with mock.patch.object(mcp_server.mac_rights, "read_status", return_value="Bitte den Schalter einschalten."):
+        with mock.patch.object(mcp_server.mac_rights, "read_status", return_value=("Bitte den Schalter einschalten.", "x-apple.test:link")):
             text = mcp_server.handle(bridge, _call(1, "computer_status", {"warte_sekunden": 0}))["result"]["content"][0]["text"]
         self.assertIn("Bitte den Schalter einschalten.", text)
+        self.assertIn('open "x-apple.test:link"', text)
         self.assertEqual(bridge.launches, 0)
 
     def test_unknown_method(self):

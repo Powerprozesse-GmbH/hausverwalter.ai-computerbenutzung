@@ -74,7 +74,7 @@ KEY_MISSING = (
     "Öffne erst dann die Seite aus getSetupLink target api_keys. Warte. Nach „fertig“ schreib zuerst genau: „Perfekt. Jetzt öffnet sich ein kleines Fenster: "
     "Füge den Schlüssel dort ein und klick auf „Speichern“.“ Führe erst dann selbst aus: {} fenster . Danach computer_status."
 )
-WAITING = "Der Computer-Assistent wartet auf eine Freigabe. Schreibe dem Nutzer genau diesen Satz, nichts sonst, keine weiteren Schritte: „{}“ Rufe danach computer_status auf, er macht von selbst weiter."
+WAITING = 'Der Computer-Assistent wartet auf eine Freigabe. Schreibe dem Nutzer zuerst genau diesen Satz, nichts sonst: „{}“ Führe erst dann selbst aus: open "{}" . Warte auf „fertig“, dann computer_status. Sagt der Nutzer, er sieht nichts: Befehl noch einmal ausführen.'
 REFUSED = "Der Computer-Assistent hat die Anfrage abgelehnt (Zugangs-Token passt nicht). Nicht den Nutzer bitten: In einer Minute noch einmal versuchen."
 
 
@@ -103,9 +103,9 @@ class Bridge:
                 return NOT_INSTALLED
         deadline = time.time() + START_WAIT_SECONDS
         while time.time() < deadline:
-            sentence = mac_rights.read_status()
-            if sentence:
-                return WAITING.format(sentence)
+            waiting = mac_rights.read_status()
+            if waiting:
+                return WAITING.format(*waiting)
             try:
                 self._state(None)
                 return None

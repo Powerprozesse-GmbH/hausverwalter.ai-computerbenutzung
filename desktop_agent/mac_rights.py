@@ -29,24 +29,24 @@ def status_path() -> Path:
     return local_auth.app_dir() / STATUS_FILE
 
 
-def write_status(sentence: str) -> None:
+def write_status(sentence: str, url: str = "") -> None:
     path = status_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    path.write_text(f"{os.getpid()}\n{sentence}", encoding="utf-8")
+    path.write_text(f"{os.getpid()}\n{url}\n{sentence}", encoding="utf-8")
 
 
 def clear_status() -> None:
     status_path().unlink(missing_ok=True)
 
 
-def read_status() -> str | None:
-    """The sentence for the person, only while the process that wrote it is still alive."""
+def read_status() -> tuple[str, str] | None:
+    """(sentence for the person, settings link), only while the process that wrote them is still alive."""
     try:
-        pid, sentence = status_path().read_text(encoding="utf-8").split("\n", 1)
+        pid, url, sentence = status_path().read_text(encoding="utf-8").split("\n", 2)
         os.kill(int(pid), 0)
     except (OSError, ValueError):
         return None
-    return sentence
+    return sentence, url
 
 
 def host_app() -> str:
@@ -86,11 +86,11 @@ def wait_for(name: str, anchor: str, check, ask, opening: str = "", extra: str =
     if check():
         return True
     app = host_app()
-    sentence = f"{opening}Ich habe dir die Einstellung „{name}“ geöffnet. Schalte dort den Schalter bei „{app}“ ein und schreib mir „fertig“.{extra}"
-    write_status(sentence)
+    sentence = f"{opening}Ich öffne dir jetzt die Einstellung „{name}“. Schalte dort den Schalter bei „{app}“ ein und schreib mir „fertig“.{extra}"
+    write_status(sentence, SETTINGS + anchor)
     print(sentence, flush=True)
     ask()
-    subprocess.run(["open", SETTINGS + anchor], check=False)
+    # no "open" here: a background app cannot bring the settings to the front, the AI's own shell can
     deadline = time.time() + MAX_WAIT_SECONDS
     while time.time() < deadline:
         if check():
