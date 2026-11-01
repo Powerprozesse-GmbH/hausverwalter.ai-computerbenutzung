@@ -70,7 +70,8 @@ class McpServerTest(unittest.TestCase):
 
     def test_server_down_not_installed_says_install_yourself(self):
         bridge = _down_bridge(launched=False)
-        reply = mcp_server.handle(bridge, _call(1, "computer_auftrag", {"text": "x"}))["result"]
+        with mock.patch.object(mcp_server.mac_rights, "read_status", return_value=None):
+            reply = mcp_server.handle(bridge, _call(1, "computer_auftrag", {"text": "x"}))["result"]
         self.assertEqual(reply["content"][0]["text"], mcp_server.NOT_INSTALLED)
 
     def test_no_key_tells_the_agent_what_to_say_and_starts_nothing(self):
