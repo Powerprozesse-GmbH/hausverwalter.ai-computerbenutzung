@@ -562,13 +562,22 @@ class HausverwalterLoopTest(unittest.TestCase):
         session = self._session([(200, CLICK), (402, BUDGET_ERROR)])
         session.send("Öffne die Notizen-App")
         self.assertEqual(len(self.requests), 2)  # no retry, no further call
-        self.assertEqual(self.lines[-1], "KI-Guthaben aufgebraucht – in hausverwalter.ai aufladen.")
+        self.assertEqual(self.lines[-1], agent.PROBLEM + "KI-Credits aufgebraucht")
         self.assertEqual(session.error_count, 1)
+
+    def test_service_errors_end_with_a_clear_line(self):
+        cases = [(403, "permission_error", agent.KEY_FORBIDDEN), (429, "rate_limit_error", agent.TOO_MANY_CALLS), (500, "api_error", agent.SERVICE_DOWN)]
+        for status, kind, line in cases:
+            with self.subTest(status=status):
+                error = (status, {"type": "error", "error": {"type": kind, "message": "egal"}})
+                session = self._session([error] * 3)
+                session.send("Irgendwas")
+                self.assertEqual(self.lines[-1], agent.PROBLEM + line)
 
     def test_invalid_key(self):
         session = self._session([(401, {"type": "error", "error": {"type": "authentication_error", "message": "invalid key"}})])
         session.send("Irgendwas")
-        self.assertEqual(self.lines[-1], agent.KEY_INVALID)
+        self.assertEqual(self.lines[-1], agent.PROBLEM + agent.KEY_INVALID)
         self.assertNotIn(HV_KEY, "\n".join(self.lines))
 
     def test_key_comes_from_the_os_key_store(self):

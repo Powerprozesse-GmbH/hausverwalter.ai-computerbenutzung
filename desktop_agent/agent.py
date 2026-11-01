@@ -57,6 +57,11 @@ HV_CLOUD_PRICES = {"input": 3.00, "output": 15.00, "cache_write": 3.75, "cache_r
 CLIENT_HEADER = f"hausverwalter-computer/{VERSION}"
 BUDGET_EXHAUSTED = "KI-Guthaben aufgebraucht – in hausverwalter.ai aufladen."
 KEY_INVALID = "Schlüssel ungültig – bitte den hausverwalter.ai-API-Schlüssel neu einrichten."
+KEY_FORBIDDEN = "Der hausverwalter.ai-API-Schlüssel darf das nicht. Bitte einen Schlüssel eines Administrators nehmen."
+TOO_MANY_CALLS = "Zu viele Anfragen an hausverwalter.ai. Bitte in einer Minute den Auftrag noch einmal geben."
+SERVICE_DOWN = "Der KI-Dienst von hausverwalter.ai antwortet gerade nicht. Bitte in ein paar Minuten den Auftrag noch einmal geben."
+NO_CONNECTION = "Keine Verbindung zu hausverwalter.ai. Bitte die Internetverbindung prüfen und den Auftrag noch einmal geben."
+PROBLEM = "Problem: "  # mcp_server.py reports such a line as the reason the task ended
 NO_KEY = "Kein hausverwalter.ai-API-Schlüssel gespeichert. Bitte einrichten: python api_key.py einrichten"
 TENSORX_URL = "https://api.tensorx.ai/v1"
 TENSORX_MODEL = os.environ.get("HV_TENSORX_MODEL", "deepseek/deepseek-v4.1-flash")
@@ -272,6 +277,11 @@ class Session:
                 if self._account_problem(exc):
                     return
                 raise
+            except anthropic.APIConnectionError:
+                if self.provider != "hausverwalter":
+                    raise
+                self._problem(NO_CONNECTION)
+                return
             if self.provider == "hausverwalter":
                 price = HV_CLOUD_PRICES
             else:
@@ -479,15 +489,26 @@ class Session:
             self.cost_micro_usd += metering.record_usage(self.con, self.tenant_id, self.task_id, usage, None, model, price, premium)
 
     def _account_problem(self, exc: anthropic.APIStatusError) -> bool:
-        """hausverwalter.ai: 402 budget_exhausted or 401 end the task with one clear line. Other errors are raised."""
+        """hausverwalter.ai refusals end the task with one clear line. Other providers' errors are raised."""
         if exc.status_code == 402 and _error_type(exc) == "budget_exhausted":
-            self.log(BUDGET_EXHAUSTED)
+            self._problem(_error_message(exc) or BUDGET_EXHAUSTED)
         elif exc.status_code == 401:
-            self.log(KEY_INVALID)
+            self._problem(KEY_INVALID)
+        elif self.provider != "hausverwalter":
+            return False
+        elif exc.status_code == 403:
+            self._problem(KEY_FORBIDDEN)
+        elif exc.status_code == 429:
+            self._problem(TOO_MANY_CALLS)
+        elif exc.status_code >= 500:
+            self._problem(SERVICE_DOWN)
         else:
             return False
-        self.error_count += 1
         return True
+
+    def _problem(self, text: str) -> None:
+        self.log(PROBLEM + text)
+        self.error_count += 1
 
     # --- actions ---------------------------------------------------------------------------
 
@@ -656,6 +677,12 @@ def _error_type(exc: anthropic.APIStatusError) -> str | None:
     body = exc.body if isinstance(exc.body, dict) else {}
     error = body.get("error")
     return error.get("type") if isinstance(error, dict) else None
+
+
+def _error_message(exc: anthropic.APIStatusError) -> str | None:
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error")
+    return error.get("message") if isinstance(error, dict) else None
 
 
 def _stopped_result(tool_use: Any) -> dict[str, Any]:

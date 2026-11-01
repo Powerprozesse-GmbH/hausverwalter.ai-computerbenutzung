@@ -153,6 +153,9 @@ class Bridge:
             where = "arbeitet"
         else:
             where = "fertig oder wartet auf Antwort des Nutzers"
+        problems = [line for line in state["log"] if line.startswith("Problem: ")]
+        if problems and not state["running"]:
+            return f"Auftrag abgebrochen. {problems[-1]} Sag dem Nutzer genau das in einfachen Worten, wiederhole den Auftrag nicht von selbst."
         lines = "\n".join(state["log"]) or "(nichts Neues)"
         return f"Zustand: {where}\nKosten bisher: {state['cost_usd']:.2f} USD\nNeue Schritte:\n{lines}\nLetzte Nachricht des Assistenten: {state['last_reply'] or '-'}"
 

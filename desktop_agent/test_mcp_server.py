@@ -98,6 +98,12 @@ class McpServerTest(unittest.TestCase):
         self.assertIn('open "x-apple.test:link"', text)
         self.assertEqual(bridge.launches, 0)
 
+    def test_problem_line_is_reported_as_reason(self):
+        bridge = FakeBridge()
+        bridge.lines.append("Problem: KI-Guthaben aufgebraucht.")
+        text = mcp_server.handle(bridge, _call(1, "computer_status", {"warte_sekunden": 0}))["result"]["content"][0]["text"]
+        self.assertIn("Auftrag abgebrochen. Problem: KI-Guthaben aufgebraucht.", text)
+
     def test_unknown_method(self):
         reply = mcp_server.handle(FakeBridge(), {"jsonrpc": "2.0", "id": 9, "method": "resources/list"})
         self.assertEqual(reply["error"]["code"], -32601)
