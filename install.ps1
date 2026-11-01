@@ -34,7 +34,7 @@
         $form.MaximizeBox = $false
         $form.MinimizeBox = $false
         $label = New-Object System.Windows.Forms.Label
-        $label.Text = "Bitte den API-Schlüssel aus hausverwalter.ai einfügen (Einstellungen › API-Schlüssel & MCP). Er wird nur in der Windows-Anmeldeinformationsverwaltung dieses PCs gespeichert."
+        $label.Text = "Ich habe die Schlüssel-Seite von hausverwalter.ai geöffnet. Klick dort auf „Erstellen“ und „Kopieren“ und füge den Schlüssel hier ein."
         $label.SetBounds(12, 10, 476, 44)
         $box = New-Object System.Windows.Forms.TextBox
         $box.UseSystemPasswordChar = $true
@@ -99,6 +99,8 @@
     if ($LASTEXITCODE -eq 0 -and -not $env:HV_NEUER_SCHLUESSEL) {
         Write-Host "Schlüssel ist schon gespeichert."
     } else {
+        Start-Process $(if ($env:HV_KEY_URL) { $env:HV_KEY_URL } else { "https://app.hausverwalter.ai/settings/api-keys" })
+        Start-Sleep -Seconds 2
         $key = Read-HiddenKey
         if (-not $key) { throw "Abgebrochen. Zum Einrichten die Installation erneut ausführen." }
         $key | & $Py $ApiKey einrichten --stdin

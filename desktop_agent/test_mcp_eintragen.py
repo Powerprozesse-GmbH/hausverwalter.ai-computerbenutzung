@@ -39,5 +39,15 @@ class AddEntryTest(unittest.TestCase):
         self.assertEqual(self.path.read_text(), "{kaputt")
 
 
+class AddRuleTest(unittest.TestCase):
+    def test_appends_once_and_keeps_text(self):
+        path = Path(tempfile.mkdtemp()) / "AGENTS.md"
+        path.write_text("eigene Regel\n")
+        self.assertEqual(mcp_eintragen.add_rule(path), "neu")
+        self.assertEqual(mcp_eintragen.add_rule(path), "unverändert")
+        self.assertIn("eigene Regel", path.read_text())
+        self.assertEqual(path.read_text().count(mcp_eintragen.RULE_MARK), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

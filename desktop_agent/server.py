@@ -2,7 +2,7 @@
 
 Also the control point for the overlay (overlay.py on macOS, overlay_win.py on Windows:
 glowing screen edge, Pause/Stopp) and for other agents (mcp_server.py: OpenCode, Hermes).
-HV_NO_BROWSER=1 skips opening the page, HV_NO_OVERLAY=1 skips the overlay.
+HV_BROWSER=1 opens the page (debugging only), HV_NO_OVERLAY=1 skips the overlay.
 
 Security: binds to 127.0.0.1 only. Every request except the static page needs the per-start
 token (header X-HV-Token, file readable only by this user, see local_auth.py; the page gets it

@@ -14,7 +14,8 @@ APP="$BASE/app"
 VENV="$BASE/venv"
 PY="$VENV/bin/python"
 LAUNCHER="$HOME/Applications/hausverwalter Computer.command"
-KEY_PROMPT='Bitte den API-Schlüssel aus hausverwalter.ai einfügen (Einstellungen › API-Schlüssel & MCP). Er wird nur im Schlüsselbund dieses Macs gespeichert.'
+KEY_URL="${HV_KEY_URL:-https://app.hausverwalter.ai/settings/api-keys}"
+KEY_PROMPT='Ich habe die Schlüssel-Seite von hausverwalter.ai geöffnet. Klick dort auf „Erstellen“ und „Kopieren“ und füge den Schlüssel hier ein.'
 
 say() { printf '\n==> %s\n' "$1"; }
 
@@ -47,10 +48,14 @@ main() {
   if [ -z "${HV_NEUER_SCHLUESSEL:-}" ] && "$PY" "$APP/desktop_agent/api_key.py" pruefen >/dev/null 2>&1; then
     echo "Schlüssel ist schon gespeichert."
   else
+    open "$KEY_URL" || true
+    sleep 2
     # hidden dialog: the key never shows up in a terminal, a log or the AI agent that runs this script
-    KEY="$(osascript -e "text returned of (display dialog \"$KEY_PROMPT\" with title \"hausverwalter Computer\" default answer \"\" with hidden answer buttons {\"Abbrechen\", \"Speichern\"} default button \"Speichern\" cancel button \"Abbrechen\")")" \
-      || { echo "Abgebrochen. Zum Einrichten das Skript erneut ausführen."; exit 1; }
-    printf '%s\n' "$KEY" | "$PY" "$APP/desktop_agent/api_key.py" einrichten --stdin
+    until
+      KEY="$(osascript -e activate -e "text returned of (display dialog \"$KEY_PROMPT\" with title \"hausverwalter Computer\" default answer \"\" with hidden answer buttons {\"Abbrechen\", \"Speichern\"} default button \"Speichern\" cancel button \"Abbrechen\")")" \
+        || { echo "Abgebrochen. Zum Einrichten das Skript erneut ausführen."; exit 1; }
+      printf '%s\n' "$KEY" | "$PY" "$APP/desktop_agent/api_key.py" einrichten --stdin
+    do :; done
     unset KEY
   fi
 
