@@ -125,7 +125,7 @@ Unter Windows heißt der Python-Pfad `<Installationsordner>\venv\Scripts\python.
 
 ```bash
 uv venv --python 3.12 && uv pip install -r requirements.txt
-cd desktop_agent && PYTHONPATH=.. ../.venv/bin/python -m unittest test_agent.py test_mcp_server.py test_win_control.py test_server.py test_api_key.py
+cd desktop_agent && PYTHONPATH=.. ../.venv/bin/python -m unittest test_agent.py test_mcp_server.py test_win_control.py test_server.py test_api_key.py test_install_ps1.py
 ```
 
 - `desktop_agent/agent.py`: Ablauf (Modellaufrufe, Pause/Stopp, Zusammenfassung langer Verläufe)
