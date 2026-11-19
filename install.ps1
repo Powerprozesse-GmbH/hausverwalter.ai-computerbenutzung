@@ -73,9 +73,30 @@
         if (-not $Uv) { throw "uv konnte nicht installiert werden. Internetverbindung pr${ue}fen und erneut ausf${ue}hren." }
     }
 
+    # Claude-App keeps its config in memory and writes it back on exit, so an entry written while it runs is lost;
+    # it also runs our MCP server from the venv. Close it now, start it again at the end.
+    # Never close the Claude this installer runs in (e.g. its Code tab): walk up our own parent processes.
+    $Mine = @(); $id = $PID
+    while ($id -and $Mine.Count -lt 30) {
+        $Mine += $id
+        $id = (Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue).ParentProcessId
+    }
+    $ClaudeApp = @(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.Path -match '\\WindowsApps\\Claude_|\\AnthropicClaude\\' })
+    $InsideClaude = @($ClaudeApp | Where-Object { $Mine -contains $_.Id }).Count -gt 0
+    $Restart = $ClaudeApp.Count -gt 0 -and -not $InsideClaude
+    if ($Restart) {
+        Write-Host "Claude-App wird kurz beendet und am Ende wieder gestartet, damit sie ${lq}computer${rq} kennt."
+        $ClaudeApp | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+    }
+
     Say "2/5 Programm laden"
     # an update replaces the running program; it has no window the person could close
     Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    # MCP servers that AI programs started from the venv lock it too (they outlive a killed Claude)
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($Base, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $Mine -notcontains $_.ProcessId } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 1
     if (Test-Path $Venv) {
         # python.exe is locked while the assistant runs; check before anything is replaced
@@ -129,6 +150,13 @@
 
     $McpScript = Join-Path $App "desktop_agent\mcp_server.py"
     & $Py (Join-Path $App "desktop_agent\mcp_eintragen.py") $Py $McpScript
+    if ($Restart) {
+        try {
+            $StartApp = Get-StartApps | Where-Object Name -eq "Claude" | Select-Object -First 1
+            if ($StartApp) { Start-Process ("shell:AppsFolder\" + $StartApp.AppID) } else { Write-Host "Claude-App bitte selbst wieder starten." }
+        } catch { Write-Host "Claude-App bitte selbst wieder starten." }
+    }
+    if ($InsideClaude) { Write-Host "Wichtig: Claude-App einmal ganz beenden (auch im Infobereich unten rechts) und die Installation in PowerShell erneut ausf${ue}hren, sonst fehlt ${lq}computer${rq}." }
     & $Py $ApiKey pruefen | Out-Null
     if ($LASTEXITCODE -eq 0) { Start-Process $Shortcut }
     $Yaml = { param([string]$Path) "'" + $Path.Replace("'", "''") + "'" }  # single quotes: backslashes stay as they are
