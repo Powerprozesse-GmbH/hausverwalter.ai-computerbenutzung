@@ -18,10 +18,28 @@ RULE_MARK = "j57qjt88wqf7bbtmqsp79yyra58hcbg0"
 RULE = f"User wants their computer operated (\"Computer bedienen\", \"Computer-Use\", a desktop program): before anything else pageRead page {RULE_MARK} (hausverwalter.ai MCP) in full and follow it. Do not ask what to do first."
 
 
-def claude_config(home: Path) -> Path:
-    if sys.platform == "win32":
-        return Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming") / "Claude" / "claude_desktop_config.json"
-    return home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+CLAUDE_FILE = "claude_desktop_config.json"
+
+
+def claude_configs(home: Path) -> list[Path]:
+    """Claude-App config files. Windows Store/MSIX app reads its own copy, not %APPDATA%\\Claude."""
+    if sys.platform != "win32":
+        return [home / "Library" / "Application Support" / "Claude" / CLAUDE_FILE]
+    roaming = Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
+    local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+    folders = [roaming / "Claude"]
+    folders += sorted((local / "Packages").glob("Claude_*/LocalCache/Roaming/Claude"))
+    folders += sorted(path for path in (local / "Claude-Data").glob("*") if path.is_dir())
+    folders.append(local / "Claude-3p")
+    return [folder / CLAUDE_FILE for folder in folders]
+
+
+def best(results: list[str]) -> str:
+    """One line for the person: written somewhere beats already there beats the rest."""
+    for wanted in ("neu", "unverändert", "Datei nicht lesbar"):
+        if wanted in results:
+            return wanted
+    return "kein Programm"
 
 
 def add_entry(path: Path, keys: list[str], entry: dict) -> str:
@@ -62,7 +80,7 @@ def main(python: str, script: str, home: Path | None = None) -> None:
     results = {
         "OpenCode": add_entry(home / ".config" / "opencode" / "opencode.json", ["mcp", "servers"],
                               {"type": "local", "command": [python, script], "timeout": TIMEOUT_MS}),
-        "Claude-App": add_entry(claude_config(home), ["mcpServers"], {"command": python, "args": [script]}),
+        "Claude-App": best([add_entry(path, ["mcpServers"], {"command": python, "args": [script]}) for path in claude_configs(home)]),
     }
     results["OpenCode-Regel"] = add_rule(home / ".config" / "opencode" / "AGENTS.md")
     claude = shutil.which("claude")

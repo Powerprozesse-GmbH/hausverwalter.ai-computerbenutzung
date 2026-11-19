@@ -7,6 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import mcp_eintragen
 
@@ -37,6 +38,36 @@ class AddEntryTest(unittest.TestCase):
         self.path.write_text("{kaputt")
         self.assertEqual(mcp_eintragen.add_entry(self.path, ["mcpServers"], {"command": "py"}), "Datei nicht lesbar")
         self.assertEqual(self.path.read_text(), "{kaputt")
+
+
+class ClaudeConfigsTest(unittest.TestCase):
+    """Windows Store/MSIX Claude app has no %APPDATA%\\Claude; it reads its packaged copy."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp())
+        self.local = self.home / "AppData" / "Local"
+        env = {"APPDATA": str(self.home / "AppData" / "Roaming"), "LOCALAPPDATA": str(self.local)}
+        for patcher in (mock.patch.object(mcp_eintragen.sys, "platform", "win32"), mock.patch.dict(mcp_eintragen.os.environ, env)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_msix_app_gets_entry_and_keeps_preferences(self):
+        folder = self.local / "Packages" / "Claude_pzs8sxrjxfjjc" / "LocalCache" / "Roaming" / "Claude"
+        folder.mkdir(parents=True)
+        (folder / "claude_desktop_config.json").write_text(json.dumps({"preferences": {"x": 1}}))
+        data = self.local / "Claude-Data" / "Claude_pzs8sxrjxfjjc"
+        data.mkdir(parents=True)
+        results = [mcp_eintragen.add_entry(p, ["mcpServers"], {"command": "py"}) for p in mcp_eintragen.claude_configs(self.home)]
+        self.assertEqual(mcp_eintragen.best(results), "neu")
+        config = json.loads((folder / "claude_desktop_config.json").read_text())
+        self.assertEqual(config["preferences"], {"x": 1})
+        self.assertIn("computer", config["mcpServers"])
+        self.assertIn("computer", json.loads((data / "claude_desktop_config.json").read_text())["mcpServers"])
+
+    def test_no_claude_app_writes_nothing(self):
+        results = [mcp_eintragen.add_entry(p, ["mcpServers"], {"command": "py"}) for p in mcp_eintragen.claude_configs(self.home)]
+        self.assertEqual(mcp_eintragen.best(results), "kein Programm")
+        self.assertFalse(any(self.home.rglob("claude_desktop_config.json")))
 
 
 class AddRuleTest(unittest.TestCase):
