@@ -1,14 +1,17 @@
-# hausverwalter.ai Computerbenutzung – Installation unter Windows, ohne Administratorrechte:
+# hausverwalter.ai Computerbenutzung - Installation unter Windows, ohne Administratorrechte:
 #   irm https://raw.githubusercontent.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung/main/install.ps1 | iex
-# Legt alles unter %LOCALAPPDATA%\hausverwalter-computer ab (Python 3.12 über uv), fragt den
-# hausverwalter.ai-API-Schlüssel in einem Fenster mit verdeckter Eingabe ab und speichert ihn in der
-# Windows-Anmeldeinformationsverwaltung. Erneut ausführen = aktualisieren; der Schlüssel bleibt
+# Legt alles unter %LOCALAPPDATA%\hausverwalter-computer ab (Python 3.12 ueber uv), fragt den
+# hausverwalter.ai-API-Schluessel in einem Fenster mit verdeckter Eingabe ab und speichert ihn in der
+# Windows-Anmeldeinformationsverwaltung. Erneut ausfuehren = aktualisieren; der Schluessel bleibt
 # (neu eingeben: vorher $env:HV_NEUER_SCHLUESSEL = "1").
 # Runs inside a script block, so nothing leaks into the caller's PowerShell session; errors end it with "throw", never "exit".
+# ASCII only (desktop_agent/test_install_ps1.py): PowerShell ends a string at typographic quotes, and Windows PowerShell 5.1
+# reads UTF-8 without BOM as ANSI. Umlauts and German quotes come from the char codes below.
 
 & {
     $ErrorActionPreference = "Stop"
     $ProgressPreference = "SilentlyContinue"  # Invoke-WebRequest is many times faster without the progress bar
+    $ae = [char]0xE4; $oe = [char]0xF6; $ue = [char]0xFC; $sz = [char]0xDF; $lq = [char]0x201E; $rq = [char]0x201C
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
     $Repo = "https://github.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung"
@@ -34,7 +37,7 @@
         $form.MaximizeBox = $false
         $form.MinimizeBox = $false
         $label = New-Object System.Windows.Forms.Label
-        $label.Text = "Ich habe die Schlüssel-Seite von hausverwalter.ai geöffnet. Klick dort auf „Erstellen“ und „Kopieren“ und füge den Schlüssel hier ein."
+        $label.Text = "Ich habe die Schl${ue}ssel-Seite von hausverwalter.ai ge${oe}ffnet. Klick dort auf ${lq}Erstellen${rq} und ${lq}Kopieren${rq} und f${ue}ge den Schl${ue}ssel hier ein."
         $label.SetBounds(12, 10, 476, 44)
         $box = New-Object System.Windows.Forms.TextBox
         $box.UseSystemPasswordChar = $true
@@ -60,14 +63,14 @@
 
     New-Item -ItemType Directory -Force -Path $Base | Out-Null
 
-    Say "1/5 uv einrichten (lädt Python, ohne Administratorrechte)"
+    Say "1/5 uv einrichten (l${ae}dt Python, ohne Administratorrechte)"
     $Uv = (Get-Command uv -ErrorAction SilentlyContinue).Source
     if (-not $Uv) {
         $env:UV_NO_MODIFY_PATH = "1"
         $env:INSTALLER_NO_MODIFY_PATH = "1"
         powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex" | Out-Null
         $Uv = @("$env:USERPROFILE\.local\bin\uv.exe", "$env:USERPROFILE\.cargo\bin\uv.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if (-not $Uv) { throw "uv konnte nicht installiert werden. Internetverbindung prüfen und erneut ausführen." }
+        if (-not $Uv) { throw "uv konnte nicht installiert werden. Internetverbindung pr${ue}fen und erneut ausf${ue}hren." }
     }
 
     Say "2/5 Programm laden"
@@ -77,7 +80,7 @@
     if (Test-Path $Venv) {
         # python.exe is locked while the assistant runs; check before anything is replaced
         try { Remove-Item $Venv -Recurse -Force }
-        catch { throw "Der Assistent läuft noch. Bitte sein Fenster schließen und die Installation erneut starten." }
+        catch { throw "Der Assistent l${ae}uft noch. Bitte sein Fenster schlie${sz}en und die Installation erneut starten." }
     }
     $Tmp = Join-Path ([IO.Path]::GetTempPath()) ("hv-" + [guid]::NewGuid())
     New-Item -ItemType Directory -Path $Tmp | Out-Null
@@ -91,30 +94,30 @@
         Remove-Item $Tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    Say "3/5 Python 3.12 und Pakete installieren (beim ersten Mal 1–2 Minuten)"
+    Say "3/5 Python 3.12 und Pakete installieren (beim ersten Mal 1-2 Minuten)"
     & $Uv venv --quiet --python 3.12 --python-preference only-managed $Venv
     if ($LASTEXITCODE -ne 0) { throw "Python 3.12 konnte nicht eingerichtet werden." }
     & $Uv pip install --quiet --python $Py -r (Join-Path $App "requirements.txt")
     if ($LASTEXITCODE -ne 0) { throw "Die Pakete konnten nicht installiert werden." }
 
-    Say "4/5 hausverwalter.ai-API-Schlüssel"
+    Say "4/5 hausverwalter.ai-API-Schl${ue}ssel"
     & $Py $ApiKey pruefen | Out-Null
     if ($LASTEXITCODE -eq 0 -and -not $env:HV_NEUER_SCHLUESSEL) {
-        Write-Host "Schlüssel ist schon gespeichert."
+        Write-Host "Schl${ue}ssel ist schon gespeichert."
     } elseif ($env:HV_KI) {
-        Write-Host "Noch kein Schlüssel: Die KI fragt im Chat danach."
+        Write-Host "Noch kein Schl${ue}ssel: Die KI fragt im Chat danach."
     } else {
         Start-Process $(if ($env:HV_KEY_URL) { $env:HV_KEY_URL } else { "https://app.hausverwalter.ai/settings/api-keys" })
         Start-Sleep -Seconds 2
         $key = Read-HiddenKey
-        if (-not $key) { throw "Abgebrochen. Zum Einrichten die Installation erneut ausführen." }
+        if (-not $key) { throw "Abgebrochen. Zum Einrichten die Installation erneut ausf${ue}hren." }
         $key | & $Py $ApiKey einrichten --stdin
         $saved = $LASTEXITCODE
         Remove-Variable key
-        if ($saved -ne 0) { throw "Der Schlüssel wurde nicht gespeichert." }
+        if ($saved -ne 0) { throw "Der Schl${ue}ssel wurde nicht gespeichert." }
     }
 
-    Say "5/5 Startmenü-Eintrag anlegen"
+    Say "5/5 Startmen${ue}-Eintrag anlegen"
     # The code's default provider is hausverwalter, so the shortcut needs no environment variables.
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut($Shortcut)
@@ -130,9 +133,9 @@
     if ($LASTEXITCODE -eq 0) { Start-Process $Shortcut }
     $Yaml = { param([string]$Path) "'" + $Path.Replace("'", "''") + "'" }  # single quotes: backslashes stay as they are
     Write-Host ""
-    Write-Host "Fertig, der Assistent startet jetzt. Später starten: Startmenü > „hausverwalter.ai Computerbenutzung“."
+    Write-Host "Fertig, der Assistent startet jetzt. Sp${ae}ter starten: Startmen${ue} > ${lq}hausverwalter.ai Computerbenutzung${rq}."
     Write-Host ""
-    Write-Host "KI-Agenten: Das Werkzeug „computer_status“ startet ihn von selbst. OpenCode, Claude-App und Claude Code sind eingetragen, falls vorhanden."
+    Write-Host "KI-Agenten: Das Werkzeug ${lq}computer_status${rq} startet ihn von selbst. OpenCode, Claude-App und Claude Code sind eingetragen, falls vorhanden."
     Write-Host "Hermes (%USERPROFILE%\.hermes\config.yaml) von Hand:"
     Write-Host "mcp_servers:"
     Write-Host "  computer:"
