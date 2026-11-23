@@ -49,7 +49,7 @@ def add_entry(path: Path, keys: list[str], entry: dict) -> str:
     config = {}
     if path.exists():
         try:
-            config = json.loads(path.read_text(encoding="utf-8"))
+            config = json.loads(path.read_text(encoding="utf-8-sig"))  # BOM: Notepad, PowerShell 5.1
         except ValueError:
             return "Datei nicht lesbar"
     node = config
