@@ -17,6 +17,9 @@
     # ConstrainedLanguage blocks this; PowerShell 5.1 on Windows 10/11 already speaks TLS 1.2 there
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch {}
     $Full = $ExecutionContext.SessionState.LanguageMode -eq "FullLanguage"
+    # PowerShell decodes captured Python output with the console code page; Python would write ANSI (umlauts garbled).
+    # Reading the code page works in ConstrainedLanguage, setting it does not.
+    try { $env:PYTHONIOENCODING = "cp" + [Console]::OutputEncoding.CodePage + ":replace" } catch {}
 
     $Repo = "https://github.com/Powerprozesse-GmbH/hausverwalter.ai-computerbenutzung"
     $Branch = if ($env:HV_BRANCH) { $env:HV_BRANCH } else { "main" }
@@ -125,7 +128,11 @@
 
     Say "2/5 Programm laden"
     # an update replaces the running program; it has no window the person could close
-    Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    # NetTCPIP does not load in ConstrainedLanguage; netstat.exe does (listening = remote port 0, any language)
+    $Listeners = try { @(Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction Stop | ForEach-Object { $_.OwningProcess }) } catch {
+        try { @(netstat -ano -p tcp 2>$null | ForEach-Object { if ($_ -match ':8765\s+\S+:0\s+\S+\s+(\d+)\s*$') { $Matches[1] } }) } catch { @() }
+    }
+    $Listeners | Where-Object { $_ -and $_ -ne "0" } | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }
     # MCP servers that AI programs started from the venv lock it too (they outlive a killed Claude)
     Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($Base, [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $Mine -notcontains $_.ProcessId } |
