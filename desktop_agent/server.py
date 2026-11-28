@@ -98,16 +98,20 @@ class State:
             extra = len(self.lines) - MAX_LINES
             del self.lines[:extra]
             self.dropped += extra
+        agent.write_protocol(line)
 
     @property
     def running(self) -> bool:
         """False right after Stopp, even while the worker still winds down."""
         return bool(self.thread and self.thread.is_alive()) and not self.session.stop_event.is_set()
 
-    def send(self, text: str) -> None:
+    def send(self, text: str, fenster: str | None = None, datenschutz: bool = False) -> None:
         """New task or answer when idle; while a task runs it goes to the model as a message."""
         if not text:
             return
+        if datenschutz or agent.privacy_forced():
+            if hasattr(self.session, "set_privacy"):
+                self.session.set_privacy()
         self.log(f"Du: {text}")
         if self.running:
             self.session.inbox.put(text)
@@ -115,6 +119,10 @@ class State:
         if not self._worker_gone():
             self.log("Der letzte Schritt läuft noch. Bitte gleich noch einmal senden.")
             return
+        if fenster:
+            self.session = self.make_session(self.log, fenster=fenster)
+            if datenschutz or agent.privacy_forced():
+                self.session.set_privacy()
         self.session.stop_event.clear()  # running is true from the first moment
         self.thread = threading.Thread(target=self._safe_send, args=(self.session, text), daemon=True)
         self.thread.start()
@@ -150,11 +158,12 @@ class State:
         click = getattr(screen, "last_click", None)
         replies = [line for line in lines if line.startswith("KI: ")]
         running = self.running
-        return {
+        paused = running and s.pause_event.is_set()
+        view = {
             "log": lines[max(0, since - dropped):] if since is not None else lines[-300:],
             "total": dropped + len(lines),
             "running": running,
-            "paused": running and s.pause_event.is_set(),
+            "paused": paused,
             "acting": running and s.acting,
             "cost_usd": s.cost_micro_usd / 1e6,
             "tokens_in": s.tokens_in,
@@ -164,6 +173,22 @@ class State:
             "last_step": lines[-1].removeprefix("KI: ") if lines else "",
             "click": {"x": click[0], "y": click[1], "t": click[2]} if click else None,
         }
+        if getattr(s, "datenschutz_aktiv", lambda: False)():
+            art = getattr(s, "fehlerart", "keine")
+            view.update({
+                "datenschutz": True,
+                "zustand": "pausiert" if paused else "arbeitet" if running else "fertig",
+                "schritte": getattr(s, "steps", 0),
+                "kosten": view["cost_usd"],
+                "fehlerart": art if art in agent.FEHLERARTEN else "sonstiges",
+                "dateien": agent.export_info(),
+                "meldung": getattr(s, "notice", ""),
+                "log": [],
+                "last_reply": "",
+                "last_step": "",
+                "click": None,
+            })
+        return view
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -197,7 +222,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         state = self.server.state
         if self.path == "/send":
-            state.send(str(data.get("text", "")).strip())
+            privacy = bool(data.get("datenschutz")) or agent.privacy_forced()
+            fenster = str(data.get("fenster")).strip() if data.get("fenster") else None
+            try:
+                state.send(str(data.get("text", "")).strip(), fenster=fenster or None, datenschutz=privacy)
+            except Exception as exc:
+                # The controlling AI only hears „sonstiges“. The class name stays in the local log, without the text.
+                print(f"Auftrag abgelehnt: {type(exc).__name__}", file=sys.stderr, flush=True)
+                self._send(409, "text/plain", "sonstiges" if privacy else str(exc))
+                return
         elif self.path == "/pause":
             state.session.pause()
         elif self.path == "/resume":
@@ -246,15 +279,37 @@ def make_server(state: State, token: str, port: int = PORT) -> ThreadingHTTPServ
     return server
 
 
-def make_session(log: Callable[[str], None]) -> agent.Session:
-    """Mac or Windows screen by platform; Windows-only modules are never imported on the Mac and vice versa."""
+def screen_for(fenster: str | None = None) -> Any:
+    """Linux first, so a container never imports Quartz. A window title picks the window class."""
+    if sys.platform == "linux":
+        if fenster:
+            raise RuntimeError("Fenster-Modus nicht verfügbar")
+        from linux_control import LinuxScreen
+
+        return LinuxScreen()
+    if fenster:
+        try:
+            if sys.platform == "win32":
+                from win_control import WinWindowScreen as Screen
+            else:
+                from mac_control import MacWindowScreen as Screen
+        except ImportError:
+            raise RuntimeError("Fenster-Modus nicht verfügbar") from None
+        return Screen(fenster)
     if sys.platform == "win32":
         from win_control import WinScreen as Screen
     else:
         from mac_control import MacScreen as Screen
-    session = agent.Session(tenant_id=TENANT, screen=Screen(), log=log)
+    return Screen()
+
+
+def make_session(log: Callable[[str], None], fenster: str | None = None) -> agent.Session:
+    """Linux, else Windows, else Mac. Windows-only modules stay off the Mac and Quartz stays off Linux."""
+    session = agent.Session(tenant_id=TENANT, screen=screen_for(fenster), log=log)
     if session.con is not None:  # internal providers: local tenant budget
         agent.ensure_tenant(session.con, TENANT, BUDGET_USD)
+    if agent.privacy_forced():
+        session.set_privacy()
     return session
 
 
@@ -285,11 +340,11 @@ def main() -> None:
     server = make_server(state, "")  # bind first: a second instance fails here, before it replaces the running one's token
     server.token = token = local_auth.new_token()
     atexit.register(local_auth.remove_token, token)
-    if not os.environ.get("HV_NO_OVERLAY"):
+    if sys.platform != "linux" and not os.environ.get("HV_NO_OVERLAY"):
         start_overlay()
     if os.environ.get("HV_BROWSER"):  # customers talk to their AI; the page is only for debugging
         webbrowser.open(f"http://127.0.0.1:{PORT}/#t={token}")
-    print(f"Assistent läuft: http://127.0.0.1:{PORT}. Dieses Fenster offen lassen, Schließen beendet ihn.")
+    print(f"Assistent läuft: http://127.0.0.1:{PORT}. Dieses Fenster offen lassen, Schließen beendet ihn.", flush=True)
     server.serve_forever()
 
 
