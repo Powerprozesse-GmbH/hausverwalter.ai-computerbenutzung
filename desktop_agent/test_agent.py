@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import tempfile
+from pathlib import Path
 import threading
 import time
 import unittest
@@ -75,6 +76,7 @@ class FakeScreen:
 
     def run(self, action, look=True):
         self.actions.append(action)
+        self.last_look = look
         if action["action"] in self.fail_on:
             raise RuntimeError("Klick ging daneben")
         return "aW1n" if look else None
@@ -795,6 +797,155 @@ class ErrorCounterTest(unittest.TestCase):
         session.stop()
         self.assertEqual(session._execute(tool_use)["content"], agent.STOPPED)
         self.assertEqual(session.error_count, 1)  # Stopp is no error
+
+
+class PrivacyTest(unittest.TestCase):
+    def _session(self, client=None):
+        session = agent.Session(tenant_id="privacy", screen=FakeScreen(), client=client or object(), log=[].append)
+        self.addCleanup(session.con.close)
+        return session
+
+    def test_env_forces_the_mode(self):
+        with mock.patch.dict(os.environ, {"HV_DATENSCHUTZ": "1"}):
+            session = self._session()
+            self.assertTrue(session.datenschutz_aktiv())
+            session.privacy = False
+            self.assertTrue(session.datenschutz_aktiv())
+            self.assertIn(agent.PRIVACY_RULE, session.system)
+
+    def test_result_line_becomes_a_fixed_sentence(self):
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs)
+
+        session = self._session(client=SimpleNamespace(messages=SimpleNamespace(create=create)))
+        session.set_privacy()
+        self.assertIn("ERGEBNIS:", session.system)
+        session.said = ["Erika Mustermann 1250 Euro\nERGEBNIS: stand=teilweise; anzahl=12; grund=rueckfrage"]
+        session._seal_notice()
+        ok = "Teilweise erledigt, 12 Stück. Grund: Rückfrage – bitte in der Fernansicht nachsehen."
+        self.assertEqual(session.notice, ok)
+        self.assertNotIn("Erika", session.notice)
+        self.assertEqual(calls, [])
+        self.assertIn("letzte Zeile", session.system)
+        self.assertIn("ohne Formatierung", session.system)
+        wrapped = [
+            "ERGEBNIS: stand=teilweise; anzahl=12; grund=rueckfrage.",
+            "**ERGEBNIS: stand=teilweise; anzahl=12; grund=rueckfrage**",
+            "`ERGEBNIS: stand=teilweise; anzahl=12; grund=rueckfrage`",
+            "Zusammenfassung ERGEBNIS: stand=teilweise; anzahl=12; grund=rueckfrage",
+            "ERGEBNIS: stand = teilweise ; anzahl = 12 ; grund = rueckfrage",
+            "ergebnis: stand=teilweise; anzahl=12; grund=rueckfrage",
+            "ERGEBNIS: stand=erledigt; anzahl=1; grund=keine\nERGEBNIS: stand=teilweise; anzahl=12; grund=rueckfrage Erika Mustermann",
+        ]
+        for text in wrapped:
+            session.said = [text]
+            session._seal_notice()
+            self.assertEqual(session.notice, ok, text)
+            self.assertNotIn("Erika", session.notice)
+            self.assertNotIn("Mustermann", session.notice)
+        session.said = ["ERGEBNIS: stand=fertig; anzahl=12; grund=rueckfrage Erika Mustermann"]
+        session._seal_notice()
+        self.assertEqual(session.notice, agent.UNCLEAR)
+        self.assertNotIn("Erika", session.notice)
+        session.said = ["Erika Mustermann"]
+        session._seal_notice()
+        self.assertEqual(session.notice, agent.UNCLEAR)
+        self.assertNotIn("Erika", session.notice)
+
+
+class PlaceholderTest(unittest.TestCase):
+    def test_value_is_typed_and_stays_out_of_history(self):
+        secret = "s3cret-value-Xy9"
+        with tempfile.TemporaryDirectory() as tmp:
+            secret_path = Path(tmp, "geheim.env")
+            secret_path.write_text(f"TV_PASS={secret}\n", encoding="utf-8")
+            protocol = Path(tmp, "protokoll")
+            lines = []
+
+            def log(line):
+                lines.append(line)
+                agent.write_protocol(line)
+
+            screen = FakeScreen()
+            env = {"HV_GEHEIM_DATEI": str(secret_path), "HV_PROTOKOLL_DIR": str(protocol)}
+            with mock.patch.dict(os.environ, env):
+                session = agent.Session(tenant_id="secret", screen=screen, client=object(), log=log)
+                self.addCleanup(session.con.close)
+                self.assertIn("{{TV_PASS}}", session.system)
+                self.assertNotIn(secret, session.system)
+                tool = SimpleNamespace(id="t", input={"action": "type", "text": "login {{TV_PASS}}"})
+                session.messages.append({"role": "user", "content": tool.input["text"]})
+                result = session._execute(tool)
+                blob = "\n".join(lines) + json.dumps(session.messages) + session._recap()
+                blob += (protocol / "protokoll.log").read_text(encoding="utf-8")
+            self.assertFalse(result.get("is_error"))
+            self.assertEqual(screen.actions[-1]["text"], f"login {secret}")
+            self.assertFalse(screen.last_look)
+            self.assertEqual(tool.input["text"], "login {{TV_PASS}}")
+            self.assertNotIn(secret, blob)
+            self.assertIn("{{TV_PASS}}", blob)
+
+    def test_unknown_name_types_nothing(self):
+        screen = FakeScreen()
+        session = agent.Session(tenant_id="secret", screen=screen, client=object(), log=[].append)
+        self.addCleanup(session.con.close)
+        tool = SimpleNamespace(id="t", input={"action": "type", "text": "{{NOPE}}"})
+        result = session._execute(tool)
+        self.assertTrue(result["is_error"])
+        self.assertEqual(screen.actions, [])
+        self.assertIn("{{NOPE}}", result["content"])
+
+    def test_later_picture_hides_the_secret(self):
+        import base64
+        import io
+        from PIL import Image
+
+        def drop_pillow():
+            for name in list(sys.modules):
+                if name == "PIL" or name.startswith("PIL."):
+                    del sys.modules[name]
+
+        self.addCleanup(drop_pillow)
+        secret = "s3cret-value"
+        image = Image.new("RGB", (40, 40), (255, 255, 255))
+        buffer = io.BytesIO()
+        image.save(buffer, "JPEG", quality=95)
+        raw = base64.b64encode(buffer.getvalue()).decode()
+
+        class Shot(FakeScreen):
+            def screenshot(self):
+                self.last_texts = [("login s3cret-value", 20, 20), ("s3cr", 5, 5)]
+                return raw
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "geheim.env").write_text(f"TV_PASS={secret}\n", encoding="utf-8")
+            screen = Shot()
+            with mock.patch.dict(os.environ, {"HV_GEHEIM_DATEI": str(Path(tmp, "geheim.env"))}):
+                session = agent.Session(tenant_id="redact", screen=screen, client=object(), log=[].append)
+                self.addCleanup(session.con.close)
+                session.hide_secrets = True
+                shot = session._grab()
+                picture = Image.open(io.BytesIO(base64.b64decode(shot))).convert("RGB")
+                texts = " ".join(item[0] for item in screen.last_texts)
+        self.assertNotIn(secret, texts)
+        self.assertNotIn("s3cr", texts)
+        self.assertEqual(texts.count("{{TV_PASS}}"), 2)
+        self.assertLess(max(picture.getpixel((20, 20))), 30)
+        self.assertLess(max(picture.getpixel((5, 5))), 30)
+
+
+class SuffixTest(unittest.TestCase):
+    def test_odd_suffix_counts_as_andere(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "bericht.Müller").write_bytes(b"ab")
+            Path(tmp, "a.pdf").write_bytes(b"c")
+            with mock.patch.dict(os.environ, {"HV_EXPORT_DIR": tmp}):
+                info = agent.export_info()
+        self.assertEqual(info["anzahl"], 2)
+        self.assertEqual(info["endungen"], [".andere", ".pdf"])
+        self.assertNotIn("müller", "".join(info["endungen"]))
 
 
 if __name__ == "__main__":

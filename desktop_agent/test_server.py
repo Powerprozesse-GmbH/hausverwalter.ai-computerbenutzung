@@ -5,9 +5,12 @@ screen; nothing moves the mouse, types or calls a paid API.
 Run: PYTHONPATH=.. .venv/bin/python -m unittest test_server.py
 """
 
+import contextlib
 import http.client
+import io
 import json
 import os
+import queue
 import stat
 import sys
 import tempfile
@@ -15,6 +18,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import ModuleType
 from unittest import mock
 
 import httpx2
@@ -191,6 +195,112 @@ class TokenFileTest(unittest.TestCase):
             path = local_auth.token_path()
         self.assertTrue(str(path).startswith(str(Path.home())) or "LOCALAPPDATA" in os.environ)
         self.assertEqual(path.parent.name, "hausverwalter-computer")
+
+
+def _idle_session():
+    session = mock.Mock()
+    session.stop_event = threading.Event()
+    session.pause_event = threading.Event()
+    session.inbox = queue.Queue()
+    session.send = lambda text: None
+    session.set_privacy = lambda: None
+    session.datenschutz_aktiv = lambda: False
+    session.screen = FakeScreen()
+    session.cost_micro_usd = session.tokens_in = session.tokens_out = session.error_count = 0
+    session.acting = False
+    session.provider = "bedrock"
+    return session
+
+
+class FensterTest(unittest.TestCase):
+    def test_title_is_passed_to_the_window_screen(self):
+        seen = {}
+
+        class MacWindowScreen:
+            def __init__(self, fenster, *args, **kwargs):
+                seen["fenster"] = fenster
+                self.platform = "darwin"
+                self.width, self.height = 10, 10
+
+        module = ModuleType("mac_control")
+        module.MacWindowScreen = MacWindowScreen
+        with mock.patch.object(sys, "platform", "darwin"), mock.patch.dict(sys.modules, {"mac_control": module}):
+            screen = server.screen_for("TextEdit")
+        self.assertEqual(seen["fenster"], "TextEdit")
+        self.assertIsInstance(screen, MacWindowScreen)
+
+    def test_missing_class_is_a_clear_error(self):
+        module = ModuleType("mac_control")
+        with mock.patch.object(sys, "platform", "darwin"), mock.patch.dict(sys.modules, {"mac_control": module}):
+            with self.assertRaises(RuntimeError) as caught:
+                server.screen_for("TextEdit")
+        self.assertEqual(str(caught.exception), "Fenster-Modus nicht verfügbar")
+
+    def test_send_forwards_the_title(self):
+        calls = []
+
+        def factory(log, fenster=None):
+            calls.append(fenster)
+            return _idle_session()
+
+        state = server.State(factory)
+        state.send("hallo", fenster="Rechner")
+        state.thread.join(2)
+        self.assertEqual(calls, [None, "Rechner"])
+
+    def test_privacy_window_error_hides_the_title(self):
+        def factory(log, fenster=None):
+            if fenster:
+                raise RuntimeError("Fenster Erika Mustermann")
+            return _idle_session()
+
+        state = server.State(factory)
+        token = "test-token-123"
+        httpd = server.make_server(state, token, port=0)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+        self.addCleanup(httpd.shutdown)
+        self.addCleanup(httpd.server_close)
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        body = json.dumps({"text": "öffne", "fenster": "Akte", "datenschutz": True}).encode()
+        log = io.StringIO()
+        with contextlib.redirect_stderr(log):
+            connection.request("POST", "/send", body=body, headers={"Host": f"127.0.0.1:{port}", local_auth.HEADER: token, "content-type": "application/json"})
+            response = connection.getresponse()
+            data = response.read()
+        connection.close()
+        self.assertEqual(response.status, 409)
+        self.assertEqual(data, b"sonstiges")
+        self.assertIn("Auftrag abgelehnt: RuntimeError", log.getvalue())
+        self.assertNotIn("Erika", log.getvalue())
+        self.assertNotIn(b"Erika", data)
+
+
+class PrivacySnapshotTest(unittest.TestCase):
+    def test_status_drops_names_iban_and_amounts(self):
+        session = _idle_session()
+        session.datenschutz_aktiv = lambda: True
+        session.notice = "2 Dateien"
+        session.steps = 3
+        session.fehlerart = "keine"
+        session.privacy = True
+
+        def factory(log):
+            return session
+
+        state = server.State(factory)
+        state.log("KI: Erika Mustermann DE89370400440532013000 1250,00")
+        state.log("Aktion: type „DE89370400440532013000“")
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "Erika Mustermann.pdf").write_bytes(b"abc")
+            with mock.patch.dict(os.environ, {"HV_EXPORT_DIR": tmp}):
+                snap = state.snapshot(0)
+        blob = json.dumps(snap)
+        for secret in ("Erika", "Mustermann", "DE89", "1250"):
+            self.assertNotIn(secret, blob)
+        self.assertEqual(snap["meldung"], "2 Dateien")
+        self.assertEqual(snap["log"], [])
+        self.assertEqual(snap["dateien"], {"anzahl": 1, "endungen": [".pdf"], "groesse": 3})
 
 
 if __name__ == "__main__":

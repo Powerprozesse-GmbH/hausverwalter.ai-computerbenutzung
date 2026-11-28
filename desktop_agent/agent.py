@@ -24,9 +24,12 @@ a message reaches the model with the next tool results, or as a new turn if it h
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -129,6 +132,8 @@ SYSTEM_OS = {
     "win32": """Du steuerst den Windows-PC eines Mitarbeiters einer Hausverwaltung (Windows, deutsche Oberfläche).
 - Tastenkürzel mit ctrl (Strg), z. B. „ctrl+c“, nie cmd. Die Windows-Taste heißt „win“: „win“ allein öffnet das Startmenü (dort Programme über die Suche finden), dazu „win+r“, „win+e“, „alt+tab“.
 - Viele Programme laufen in einem Remotedesktop- oder Citrix-Fenster (Terminalserver). Dort zählen nur die Pixel: klick erst ins Fenster, bevor du tippst, und rechne mit kurzen Verzögerungen.""",
+    "linux": """Du steuerst einen Linux-Rechner (deutsche Oberfläche, X11).
+- Tastenkürzel mit ctrl (z. B. „ctrl+c“).""",
 }
 SYSTEM_RULES = """- Arbeite selbstständig, bis der Auftrag ganz erledigt ist. Frag nicht nach Kleinigkeiten: entscheide selbst, sag kurz was du gewählt hast, und mach weiter.
 - Frag nur nach, bevor du etwas tust, das sich nicht rückgängig machen lässt (senden, löschen, bezahlen, kaufen, Formulare oder Verträge abschicken, Daten überschreiben), und wenn Zugangsdaten fehlen.
@@ -141,11 +146,234 @@ SYSTEM_RULES = """- Arbeite selbstständig, bis der Auftrag ganz erledigt ist. F
 - Bei langen Aufgaben wird der Verlauf ab und zu durch eine Zusammenfassung ersetzt. Mach dann einfach ab dem aktuellen Bildschirm weiter.
 - Antworte dem Nutzer kurz und auf Deutsch."""
 USER_NOTE = "Nachricht vom Nutzer: {}"
+PRIVACY_RULE = (
+    "Beende mit dieser Zeile allein als letzte Zeile, ohne Formatierung, ohne Sternchen, Backticks oder Punkt: "
+    "ERGEBNIS: stand=<erledigt|teilweise|nicht_erledigt>; anzahl=<ganze Zahl>; "
+    "grund=<keine|zugang_fehlt|nicht_gefunden|programm_fehler|rueckfrage|abgebrochen|sonstiges>."
+)
+UNCLEAR = "Ergebnis unklar (Datenschutz), bitte Protokoll prüfen lassen."
+FEHLERARTEN = ("keine", "zugang", "guthaben", "verbindung", "abgebrochen", "sonstiges")
+PLACEHOLDER = re.compile(r"\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}")
+RESULT_LINE = re.compile(
+    r"(?i:ERGEBNIS)\s*:\s*stand\s*=\s*(nicht_erledigt|teilweise|erledigt)(?![A-Za-z0-9_])"
+    r"\s*;\s*anzahl\s*=\s*(0|[1-9][0-9]*)(?!\d)"
+    r"\s*;\s*grund\s*=\s*(zugang_fehlt|nicht_gefunden|programm_fehler|rueckfrage|abgebrochen|sonstiges|keine)"
+    r"(?![A-Za-z0-9_])"
+)
+_SUFFIX = re.compile(r"^\.[a-z0-9]{1,8}$")
+STAND_SATZ = {"erledigt": "Erledigt", "teilweise": "Teilweise erledigt", "nicht_erledigt": "Nicht erledigt"}
+GRUND_SATZ = {
+    "keine": "keiner",
+    "zugang_fehlt": "Zugang fehlt",
+    "nicht_gefunden": "Nicht gefunden",
+    "programm_fehler": "Programmfehler",
+    "rueckfrage": "Rückfrage – bitte in der Fernansicht nachsehen",
+    "abgebrochen": "Abgebrochen",
+    "sonstiges": "Sonstiges",
+}
 
 
 def system_prompt(platform: str = sys.platform) -> str:
-    """SYSTEM for the operating system the screen runs on (darwin or win32)."""
-    return SYSTEM_OS["win32" if platform == "win32" else "darwin"] + "\n" + SYSTEM_RULES
+    """SYSTEM for the operating system the screen runs on (darwin, win32 or linux)."""
+    if platform == "win32":
+        os_text = SYSTEM_OS["win32"]
+    elif platform == "linux":
+        os_text = SYSTEM_OS["linux"]
+    else:
+        os_text = SYSTEM_OS["darwin"]
+    return os_text + "\n" + SYSTEM_RULES
+
+
+def privacy_forced() -> bool:
+    """HV_DATENSCHUTZ=1 stays on for the whole process. A later parameter cannot turn it off."""
+    return os.environ.get("HV_DATENSCHUTZ") == "1"
+
+
+def secret_values() -> dict[str, str]:
+    """NAME=WERT from HV_GEHEIM_DATEI. Callers may use the values only to type, never to log."""
+    path = os.environ.get("HV_GEHEIM_DATEI")
+    if not path:
+        return {}
+    file = Path(path)
+    if not file.is_file():
+        return {}
+    found: dict[str, str] = {}
+    for line in file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip()
+        if name:
+            found[name] = value
+    return found
+
+
+def secret_names() -> list[str]:
+    return list(secret_values().keys())
+
+
+class UnknownPlaceholder(Exception):
+    def __init__(self, name: str) -> None:
+        super().__init__(f"Unbekannter Platzhalter {{{{{name}}}}}")
+
+
+def apply_placeholder(text: str) -> str:
+    """Replaces {{NAME}} at the moment of typing. Unknown name: raise, type nothing."""
+    secrets = secret_values()
+    names = PLACEHOLDER.findall(text)
+    missing = [name for name in names if name not in secrets]
+    if missing:
+        raise UnknownPlaceholder(missing[0])
+    return PLACEHOLDER.sub(lambda match: secrets[match.group(1)], text)
+
+
+def write_protocol(line: str) -> None:
+    """Full line into HV_PROTOKOLL_DIR, only when that folder is set. Nowhere else."""
+    folder = os.environ.get("HV_PROTOKOLL_DIR")
+    if not folder:
+        return
+    path = Path(folder)
+    path.mkdir(parents=True, exist_ok=True)
+    with (path / "protokoll.log").open("a", encoding="utf-8") as handle:
+        handle.write(line.replace("\n", " ") + "\n")
+
+
+def export_info() -> dict[str, Any]:
+    """Count, suffixes and total size of HV_EXPORT_DIR. No file names."""
+    empty: dict[str, Any] = {"anzahl": 0, "endungen": [], "groesse": 0}
+    folder = os.environ.get("HV_EXPORT_DIR")
+    if not folder:
+        return empty
+    root = Path(folder)
+    if not root.is_dir():
+        return empty
+    count, size, suffixes = 0, 0, set()
+    for file in root.rglob("*"):
+        if not file.is_file():
+            continue
+        count += 1
+        try:
+            size += file.stat().st_size
+        except OSError:
+            continue
+        suffixes.add(file.suffix.lower() if _SUFFIX.fullmatch(file.suffix.lower()) else ".andere")
+    return {"anzahl": count, "endungen": sorted(suffixes), "groesse": size}
+
+
+def notice_from_close(text: str) -> str:
+    """Last ERGEBNIS hit anywhere in the close. Only the three fields become the sentence."""
+    match, pos, text = None, 0, text or ""
+    while True:
+        found = RESULT_LINE.search(text, pos)
+        if not found:
+            break
+        match, pos = found, found.start() + 1
+    if not match:
+        return UNCLEAR
+    stand, anzahl, grund = match.group(1), int(match.group(2)), match.group(3)
+    return f"{STAND_SATZ[stand]}, {anzahl} Stück. Grund: {GRUND_SATZ[grund]}."
+
+
+def mask_secret_text(text: str, secrets: dict[str, str]) -> str:
+    """Replace a secret value, or any piece of it at least 4 characters long, with {{NAME}}."""
+    spans: list[tuple[int, int, str]] = []
+    for name, value in secrets.items():
+        if not value:
+            continue
+        needles = {value}
+        if len(value) >= 4:
+            for start in range(len(value)):
+                for end in range(start + 4, len(value) + 1):
+                    needles.add(value[start:end])
+        for needle in needles:
+            begin = 0
+            while True:
+                found = text.find(needle, begin)
+                if found < 0:
+                    break
+                spans.append((found, found + len(needle), name))
+                begin = found + 1
+    if not spans:
+        return text
+    spans.sort(key=lambda span: (span[0], -(span[1] - span[0])))
+    parts: list[str] = []
+    cursor = 0
+    for start, end, name in spans:
+        if start < cursor:
+            continue
+        parts.append(text[cursor:start])
+        parts.append("{{" + name + "}}")
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
+def _black_box(item: tuple, width: int, height: int) -> tuple[int, int, int, int]:
+    """Pixel box of one OCR hit. A centre-only hit gets a box wide enough for its text."""
+    x, y = int(item[1]), int(item[2])
+    if len(item) >= 7:
+        left, top, right, bottom = (int(item[i]) for i in range(3, 7))
+    else:
+        char = max(8, height // 40)
+        wide = max(char * 2, len(str(item[0])) * char)
+        high = char * 2
+        left, top = x - wide // 2, y - high // 2
+        right, bottom = left + wide, top + high
+    left, top = max(0, left), max(0, top)
+    right, bottom = min(width, max(left + 1, right)), min(height, max(top + 1, bottom))
+    return left, top, right, bottom
+
+
+def redact_secrets(shot: str, screen: Any) -> str:
+    """Black out OCR places that show a secret and swap those texts for {{NAME}}. Same for every screen driver."""
+    secrets = {name: value for name, value in secret_values().items() if value}
+    texts = list(getattr(screen, "last_texts", None) or [])
+    if not secrets or not texts:
+        return shot
+    painted, updated = [], []
+    for item in texts:
+        masked = mask_secret_text(str(item[0]), secrets)
+        updated.append((masked, *item[1:]))
+        if masked != item[0]:
+            painted.append(item)
+    if not painted:
+        return shot
+    screen.last_texts = updated
+    from PIL import Image, ImageDraw
+
+    image = Image.open(io.BytesIO(base64.b64decode(shot))).convert("RGB")
+    draw = ImageDraw.Draw(image)
+    for item in painted:
+        left, top, right, bottom = _black_box(item, image.width, image.height)
+        draw.rectangle((left, top, right - 1, bottom - 1), fill=(0, 0, 0))
+    buffer = io.BytesIO()
+    image.save(buffer, "JPEG", quality=95)
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+def classify_problem(text: str) -> str:
+    if text in (KEY_INVALID, KEY_FORBIDDEN, NO_KEY):
+        return "zugang"
+    if text == BUDGET_EXHAUSTED or text.startswith("Budget aufgebraucht"):
+        return "guthaben"
+    if text in (NO_CONNECTION, SERVICE_DOWN, TOO_MANY_CALLS):
+        return "verbindung"
+    return "sonstiges"
+
+
+def load_api_key() -> str | None:
+    """HV_API_KEY_FILE (one line, Linux without a key window) wins over the OS key store."""
+    path = os.environ.get("HV_API_KEY_FILE")
+    if path:
+        try:
+            key = Path(path).read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        return key or None
+    import api_key
+
+    return api_key.load()
 
 
 SYSTEM = system_prompt()
@@ -183,17 +411,42 @@ class Session:
     asked: list[str] = field(default_factory=list)  # what the user asked (task + later messages), for the recap
     done: list[str] = field(default_factory=list)  # actions so far, for the recap
     said: list[str] = field(default_factory=list)  # the model's last texts, for the recap
+    privacy: bool = False  # controlling AI sees only the fixed fields; HV_DATENSCHUTZ=1 forces this
+    steps: int = 0
+    fehlerart: str = "keine"
+    notice: str = ""  # fixed closing sentence for the controlling AI
+    hide_secrets: bool = False  # after a placeholder was typed, later pictures hide the value
 
     def __post_init__(self) -> None:
         if self.provider not in PROVIDERS:
             raise ValueError(f"HV_PROVIDER must be one of {PROVIDERS}, not {self.provider!r}")
-        self.system = system_prompt(getattr(self.screen, "platform", sys.platform))
+        if privacy_forced():
+            self.privacy = True
+        self._compose_system()
         if hasattr(self.screen, "stop_event"):
             self.screen.stop_event = self.stop_event  # long typing and glides end mid-way on Stopp
         if not self.client:
             self.client = _make_client(self.provider)
         # Customers: the hausverwalter.ai server meters and bills, nothing is stored here.
         self.con = None if self.provider == "hausverwalter" else metering.open_db()
+
+    def datenschutz_aktiv(self) -> bool:
+        return privacy_forced() or self.privacy
+
+    def set_privacy(self) -> None:
+        """Turns the privacy mode on. Nothing turns it off again."""
+        self.privacy = True
+        self._compose_system()
+
+    def _compose_system(self) -> None:
+        parts = [system_prompt(getattr(self.screen, "platform", sys.platform))]
+        if self.datenschutz_aktiv():
+            parts.append(PRIVACY_RULE)
+        names = secret_names()
+        if names:
+            listed = ", ".join(f"{{{{{name}}}}}" for name in names)
+            parts.append(f"Geheimnisse tippst du nur als Platzhalter {listed}. Den Wert kennst du nicht und erfindest ihn nicht.")
+        self.system = "\n".join(parts)
 
     def model(self) -> str:
         """Vertex: bare model id. Azure: deployment name. Bedrock: tenant's application inference profile (cost tags in AWS), else the plain EU profile."""
@@ -233,16 +486,26 @@ class Session:
         """Instant: a running model call is abandoned, no further action runs."""
         if not self.stop_event.is_set():
             self.stop_event.set()
+            if self.fehlerart == "keine":
+                self.fehlerart = "abgebrochen"
             self.log("Gestoppt.")
 
     # --- loops ---------------------------------------------------------------------------
 
     def send(self, text: str) -> None:
         """User message (new task or answer to the model's question), then run until the model stops."""
+        try:
+            self._send_body(text)
+        finally:
+            self._seal_notice()
+
+    def _send_body(self, text: str) -> None:
         self.stop_event.clear()
         self.pause_event.clear()
+        self.fehlerart = "keine"
+        self.notice = ""
         self.asked.append(text)
-        shot = self.screen.screenshot()
+        shot = self._grab()
         if self.provider == "azure":
             texts = _texts_block(self.screen)
             if self.open_calls:
@@ -292,6 +555,7 @@ class Session:
                 if block.type == "text" and block.text.strip():
                     self._say(block.text.strip())
             if response.stop_reason == "refusal":
+                self._set_fehlerart("sonstiges")
                 self.log("Claude hat abgelehnt.")
                 return
             tool_uses = [b for b in response.content if b.type == "tool_use"]
@@ -307,7 +571,7 @@ class Session:
             else:
                 results = [self._execute(tu) for tu in tool_uses]
             self._continue(results, self._drain_inbox())
-        self.log(f"Nach {MAX_STEPS} Schritten angehalten.")
+        self._halt_steps()
 
     def _claude_create(self) -> Any:
         common = {"model": self.model(), "max_tokens": 8000, "system": self.system, "output_config": {"effort": EFFORT}, "messages": self.messages}
@@ -323,13 +587,13 @@ class Session:
         """Next user turn: tool results, user notes, optionally a fresh look. After COMPACT_AFTER_CALLS calls a new
         conversation with a recap instead; the old assistant turn goes with it, so no tool_result is left without its call."""
         if self.calls < COMPACT_AFTER_CALLS or self.stop_event.is_set():
-            shot = _look(self.screen.screenshot(), self.screen) if look else []
+            shot = _look(self._grab(), self.screen) if look else []
             self.messages.append({"role": "user", "content": [*results, *notes, *shot]})
             return
         failed = [f"Letzte Aktion fehlgeschlagen: {r['content']}" for r in results
                   if r.get("is_error") and r.get("content") not in (NOT_EXECUTED, STOPPED)]
         recap = [{"type": "text", "text": text} for text in (self._recap(), *failed)]
-        self.messages = [{"role": "user", "content": [*recap, *notes, *_look(self.screen.screenshot(), self.screen)]}]
+        self.messages = [{"role": "user", "content": [*recap, *notes, *_look(self._grab(), self.screen)]}]
         self.calls = 0
 
     def _add_user(self, blocks: list[dict[str, Any]]) -> None:
@@ -369,7 +633,7 @@ class Session:
             if not calls:
                 if not self._drain_inbox():
                     return  # finished or waiting for the user's answer
-                shot = self.screen.screenshot()
+                shot = self._grab()
                 self.previous_response_id, self.chain_calls = None, 0  # user image only at chain start
                 items = [_user_input([self._recap()], shot, _texts_block(self.screen))]
                 continue
@@ -382,7 +646,7 @@ class Session:
             if self.stop_event.is_set():
                 self.open_calls = calls  # the next message answers them with the current screen
                 return
-            shot, texts = self.screen.screenshot(), _texts_block(self.screen)
+            shot, texts = self._grab(), _texts_block(self.screen)
             extra = [*(f"Aktion fehlgeschlagen: {e}" for e in errors), *(b["text"] for b in self._drain_inbox())]
             if self.chain_calls >= AZURE_CHAIN_CALLS:
                 # the server would resend every old screenshot: start a fresh chain with a short recap instead
@@ -392,7 +656,7 @@ class Session:
             items = [_call_output(call, shot) for call in calls]
             if extra or texts:
                 items.append(_user_input([*extra, *([texts] if texts else [])]))
-        self.log(f"Nach {MAX_STEPS} Schritten angehalten.")
+        self._halt_steps()
 
     def _run_chat(self) -> None:
         """OpenAI chat completions with our `computer` function (TensorX). Screenshots come back as a user message."""
@@ -430,11 +694,11 @@ class Session:
                 return
             notes = [block["text"] for block in self._drain_inbox()]
             self._continue_chat(["Bildschirm nach deinen Aktionen.", *notes], errors)
-        self.log(f"Nach {MAX_STEPS} Schritten angehalten.")
+        self._halt_steps()
 
     def _continue_chat(self, texts: list[str], errors: list[str] = ()) -> None:
         """Screenshot as the next user message; after COMPACT_AFTER_CALLS calls a fresh conversation with a recap."""
-        shot = self.screen.screenshot()
+        shot = self._grab()
         if self.calls < COMPACT_AFTER_CALLS:
             self.messages.append(_chat_look(texts, shot, self.screen))
             return
@@ -450,6 +714,7 @@ class Session:
         if self.stop_event.is_set():
             return False
         if self.con is not None and metering.remaining_micro_usd(self.con, self.tenant_id) <= 0:
+            self._set_fehlerart("guthaben")
             self.log("Budget aufgebraucht. Zugriff gesperrt.")
             return False
         return True
@@ -507,8 +772,50 @@ class Session:
         return True
 
     def _problem(self, text: str) -> None:
+        self._set_fehlerart(classify_problem(text))
         self.log(PROBLEM + text)
         self.error_count += 1
+
+    def _set_fehlerart(self, art: str) -> None:
+        if art in FEHLERARTEN and art != "keine":
+            self.fehlerart = art
+
+    def _halt_steps(self) -> None:
+        self._set_fehlerart("abgebrochen")
+        self.log(f"Nach {MAX_STEPS} Schritten angehalten.")
+
+    def _seal_notice(self) -> None:
+        """After a task, the controlling AI gets one fixed sentence parsed from the ERGEBNIS line."""
+        if not self.datenschutz_aktiv():
+            return
+        if self.stop_event.is_set() and self.fehlerart == "keine":
+            self.fehlerart = "abgebrochen"
+        text = self.said[-1] if self.said else ""
+        self.notice = notice_from_close(text)
+
+    def _typed(self, action: dict[str, Any]) -> dict[str, Any]:
+        """Copy for the screen. The history, the log and the recap keep {{NAME}}."""
+        if action.get("action") != "type" or "{{" not in (action.get("text") or ""):
+            return action
+        text = apply_placeholder(action["text"])
+        self.hide_secrets = True
+        return {**action, "text": text}
+
+    def _cover(self, shot: str | None) -> str | None:
+        """After a secret was typed, later pictures and their text list hide the value."""
+        if not shot or not self.hide_secrets:
+            return shot
+        return redact_secrets(shot, self.screen)
+
+    def _grab(self) -> str:
+        return self._cover(self.screen.screenshot()) or ""
+
+    def _act(self, action: dict[str, Any], look: bool = True) -> str | None:
+        """One action. Typing a placeholder takes no picture; the value is filled in only here."""
+        typed = self._typed(action)
+        if typed is not action:
+            look = False
+        return self._cover(self.screen.run(typed, look=look))
 
     # --- actions ---------------------------------------------------------------------------
 
@@ -527,7 +834,7 @@ class Session:
         self._did(action)
         self.acting = True
         try:
-            self.screen.run(action, look=False)
+            self._act(action, look=False)
         except Exception as exc:  # report to the model, it can try another way
             return self._failed(exc)
         finally:
@@ -547,7 +854,7 @@ class Session:
             self._did(action)
             self.acting = True
             try:
-                self.screen.run(action, look=False)
+                self._act(action, look=False)
             except Exception as exc:  # report to the model, it can try another way
                 error = self._failed(exc)
                 return [] if self.stop_event.is_set() else [error]
@@ -580,7 +887,7 @@ class Session:
             self._did(action)
             self.acting = True
             try:
-                shot = self.screen.run(action)
+                shot = self._act(action)
             finally:
                 self.acting = False
             return {"type": "tool_result", "tool_use_id": tool_use.id, "content": _look(shot, self.screen) if shot else "OK"}
@@ -618,6 +925,7 @@ class Session:
         del self.said[:-RECAP_REPLIES]
 
     def _did(self, action: dict[str, Any]) -> None:
+        self.steps += 1
         self.done.append(_describe(action))
         del self.done[:-KEEP_DONE]
 
@@ -643,9 +951,7 @@ def hausverwalter_client(key: str, http_client: Any = None) -> anthropic.Anthrop
 
 def _make_client(provider: str) -> Any:
     if provider == "hausverwalter":
-        import api_key
-
-        key = api_key.load()
+        key = load_api_key()
         if not key:
             raise MissingKey(NO_KEY)
         return hausverwalter_client(key)

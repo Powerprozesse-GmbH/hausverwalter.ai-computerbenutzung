@@ -506,3 +506,414 @@ def _draw_pointer(image: Any, x: int, y: int) -> None:
 
     arrow = [(0, 0), (0, 17), (4, 13), (7, 20), (10, 19), (7, 12), (12, 12)]
     ImageDraw.Draw(image).polygon([(x + dx, y + dy) for dx, dy in arrow], fill="white", outline="black")
+
+
+# --- one window (messages go to the program; the person's mouse and keyboard are not used) ---
+
+WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK = 0x0200, 0x0201, 0x0202, 0x0203
+WM_RBUTTONDOWN, WM_RBUTTONUP, WM_RBUTTONDBLCLK = 0x0204, 0x0205, 0x0206
+WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MBUTTONDBLCLK = 0x0207, 0x0208, 0x0209
+WM_MOUSEWHEEL, WM_MOUSEHWHEEL = 0x020A, 0x020E
+WM_KEYDOWN, WM_KEYUP, WM_CHAR = 0x0100, 0x0101, 0x0102
+MK_LBUTTON, MK_RBUTTON, MK_MBUTTON = 0x0001, 0x0002, 0x0010
+PW_RENDERFULLCONTENT = 2
+_BUTTON_MSG = {
+    "left": (WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK, MK_LBUTTON),
+    "right": (WM_RBUTTONDOWN, WM_RBUTTONUP, WM_RBUTTONDBLCLK, MK_RBUTTON),
+    "middle": (WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MBUTTONDBLCLK, MK_MBUTTON),
+}
+_BUTTON_FLAG = {
+    LEFT_DOWN: ("left", True, False), LEFT_UP: ("left", False, False),
+    0x0008: ("right", True, False), 0x0010: ("right", False, False),
+    0x0020: ("middle", True, False), 0x0040: ("middle", False, False),
+}
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_int32), ("top", ctypes.c_int32), ("right", ctypes.c_int32), ("bottom", ctypes.c_int32)]
+
+
+class _BITMAPINFOHEADER(ctypes.Structure):
+    _fields_ = [
+        ("biSize", ctypes.c_uint32), ("biWidth", ctypes.c_int32), ("biHeight", ctypes.c_int32),
+        ("biPlanes", ctypes.c_uint16), ("biBitCount", ctypes.c_uint16), ("biCompression", ctypes.c_uint32),
+        ("biSizeImage", ctypes.c_uint32), ("biXPelsPerMeter", ctypes.c_int32), ("biYPelsPerMeter", ctypes.c_int32),
+        ("biClrUsed", ctypes.c_uint32), ("biClrImportant", ctypes.c_uint32),
+    ]
+
+
+class _BITMAPINFO(ctypes.Structure):
+    _fields_ = [("bmiHeader", _BITMAPINFOHEADER), ("bmiColors", ctypes.c_uint32 * 3)]
+
+
+class FensterNichtGefunden(Exception):
+    """No usable window. `.namen` lists visible app names; a minimized hit has an empty list and a fixed message."""
+
+    def __init__(self, namen) -> None:
+        if isinstance(namen, str):
+            self.namen: list[str] = []
+            super().__init__(namen)
+        else:
+            self.namen = list(namen)
+            super().__init__("Fenster nicht gefunden. Sichtbar: " + ", ".join(self.namen))
+
+
+def pack_lparam(x: int, y: int) -> int:
+    """Client or screen point → lParam (low word x, high word y), negatives kept as 16-bit."""
+    return (int(x) & 0xFFFF) | ((int(y) & 0xFFFF) << 16)
+
+
+def app_label(path: str) -> str:
+    """File name without a trailing .exe, for matching and the visible-app list."""
+    base = path.replace("\\", "/").rsplit("/", 1)[-1]
+    return base[:-4] if base.lower().endswith(".exe") else base
+
+
+def choose_window(windows: list[dict], fenster: str) -> dict:
+    """Largest normal top-level window whose title or app name contains `fenster`. Keys: hwnd, title, app, x, y, w, h,
+    iconic, visible. A minimized hit raises; no match lists visible app names."""
+    needle = fenster.casefold().strip()
+    visible = [w for w in windows if w["visible"] and not w["iconic"] and w["w"] > 0 and w["h"] > 0]
+    namen = sorted({app_label(w["app"]) for w in visible if app_label(w["app"])}, key=str.casefold)
+    if not needle:
+        raise FensterNichtGefunden(namen)
+    matches = [w for w in windows if w["visible"] and w["w"] > 0 and w["h"] > 0 and _win_name_hit(w, needle)]
+    normal = [w for w in matches if not w["iconic"]]
+    if normal:
+        return max(normal, key=lambda w: (w["w"] * w["h"], int(w["hwnd"])))
+    if matches:
+        raise FensterNichtGefunden("Fenster ist minimiert")
+    raise FensterNichtGefunden(namen)
+
+
+def _win_name_hit(window: dict, needle: str) -> bool:
+    app = window["app"].casefold()
+    return needle in window["title"].casefold() or needle in app or needle in app_label(window["app"]).casefold()
+
+
+def _argtypes(fn, args, rest) -> None:
+    if hasattr(fn, "argtypes"):
+        fn.argtypes = args
+        fn.restype = rest
+
+
+def _win_callback(*types):
+    """stdcall on Windows. On other hosts the same prototype is cdecl, which is enough for tests."""
+    return getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)(*types)
+
+
+class WinWindowScreen(WinScreen):
+    """One window, possibly covered (PrintWindow). Input is PostMessage to that program; SendInput and
+    SetForegroundWindow are never used, so the person's mouse and keyboard stay put."""
+
+    def __init__(self, fenster: str, *args, **kwargs) -> None:
+        self.fenster = fenster
+        self.hwnd = 0
+        self.origin_x = 0
+        self.origin_y = 0
+        self._at: tuple[float, float] | None = None
+        self._target = 0
+        self._client = (0, 0)
+        super().__init__(*args, **kwargs)
+        self._bind()
+        self._locate()
+
+    def screenshot(self) -> str:
+        """JPEG of this window. Position and size are read again first. Texts are in window coordinates."""
+        self._locate()
+        raw = self._capture_bgra()
+        from PIL import Image
+
+        image = Image.frombuffer("RGB", (self.points_w, self.points_h), raw, "raw", "BGRX", 0, 1)
+        if image.size != (self.width, self.height):
+            image = image.resize((self.width, self.height), Image.Resampling.LANCZOS)
+        self.last_texts = self._ocr.read(image, self.width, self.height)
+        buffer = io.BytesIO()
+        image.save(buffer, "JPEG", quality=JPEG_QUALITY)
+        return base64.b64encode(buffer.getvalue()).decode()
+
+    def run(self, action: dict, look: bool = True) -> str | None:
+        self._locate()
+        return super().run(action, look)
+
+    def cursor_in_screenshot(self) -> list[int]:
+        """Virtual pointer in JPEG pixels: last point we sent, otherwise the window centre."""
+        if self._at is None:
+            return [round(self.width / 2), round(self.height / 2)]
+        x = (self._at[0] - self.origin_x) * self.width / self.points_w
+        y = (self._at[1] - self.origin_y) * self.height / self.points_h
+        return [round(x), round(y)]
+
+    def _point(self, coordinate: list[int]) -> tuple[float, float]:
+        x, y = coordinate
+        return self.origin_x + x * self.points_w / self.width, self.origin_y + y * self.points_h / self.height
+
+    def _cursor(self) -> tuple[int, int]:
+        if self._at is not None:
+            return int(self._at[0]), int(self._at[1])
+        return int(self.origin_x + self.points_w / 2), int(self.origin_y + self.points_h / 2)
+
+    def _move(self, x: float, y: float, held: int = 0) -> None:
+        self._check_stop()
+        self._target, cx, cy = self._child_at(x, y)
+        self._client = (cx, cy)
+        self._at = (float(x), float(y))
+        self._post(self._target, WM_MOUSEMOVE, held, pack_lparam(cx, cy))
+
+    def _click(self, name: str, coordinate, modifier_text: str | None) -> None:
+        point = self._point(coordinate) if coordinate else self._cursor()
+        self._move(*point)
+        self.last_click = (point[0], point[1], time.time())
+        mods = modifier_keys(modifier_text)
+        self._send([("key", vk, vk == VK_LWIN, True) for vk in mods])
+        which = CLICK_BUTTON.get(name, "left")
+        count = CLICK_COUNT.get(name, 1)
+        try:
+            for n in range(1, count + 1):
+                self._button(which, True, double=(n == 2))
+                self._button(which, False)
+                time.sleep(CLICK_GAP_SECONDS)
+        finally:
+            self._send([("key", vk, vk == VK_LWIN, False) for vk in reversed(mods)])
+
+    def _drag(self, start, end) -> None:
+        """Mouse-down picks the child window. The rest of the gesture stays on that HWND."""
+        self._move(*start)
+        hwnd = self._target or self.hwnd
+        self._button("left", True)
+        try:
+            for i in range(1, DRAG_STEPS + 1):
+                self._check_stop()
+                x = start[0] + (end[0] - start[0]) * i / DRAG_STEPS
+                y = start[1] + (end[1] - start[1]) * i / DRAG_STEPS
+                self._move_pinned(hwnd, x, y, MK_LBUTTON)
+                time.sleep(0.02)
+        finally:
+            self._target = hwnd
+            self._button("left", False)
+
+    def _move_pinned(self, hwnd, x: float, y: float, held: int) -> None:
+        cx, cy = self._client_point(hwnd, x, y)
+        self._target = hwnd
+        self._client = (cx, cy)
+        self._at = (float(x), float(y))
+        self._post(hwnd, WM_MOUSEMOVE, held, pack_lparam(cx, cy))
+
+    def _type(self, text: str) -> None:
+        for char in text:
+            self._check_stop()
+            if char == "\n":
+                self._key("Return")
+                continue
+            if char == "\t":
+                self._key("Tab")
+                continue
+            data = char.encode("utf-16-le")
+            for i in range(0, len(data), 2):
+                self._post(self._target or self.hwnd, WM_CHAR, int.from_bytes(data[i:i + 2], "little"), 1)
+            time.sleep(TYPE_GAP_SECONDS)
+
+    def _send(self, events: list[Event]) -> None:
+        """Key and button events as window messages. Never SendInput."""
+        for event in events:
+            kind = event[0]
+            if kind == "key":
+                _, vk, extended, down = event
+                self._post_key(vk, down, extended)
+            elif kind == "unicode":
+                _, unit, down = event
+                if down:
+                    self._post(self._target or self.hwnd, WM_CHAR, unit, 1)
+            elif kind == "button":
+                which, down, _double = _BUTTON_FLAG[event[1]]
+                self._button(which, down)
+            elif kind == "wheel":
+                _, delta, horizontal = event
+                sx, sy = self._cursor()
+                msg = WM_MOUSEHWHEEL if horizontal else WM_MOUSEWHEEL
+                self._post(self._target or self.hwnd, msg, (int(delta) & 0xFFFF) << 16, pack_lparam(sx, sy))
+            elif kind == "move":
+                continue
+            else:
+                raise ValueError(f"unknown input event {event!r}")
+
+    def _button(self, which: str, down: bool, double: bool = False) -> None:
+        if not self._target:
+            self._move(*self._cursor())
+        down_msg, up_msg, dbl_msg, mk = _BUTTON_MSG[which]
+        msg = dbl_msg if double else (down_msg if down else up_msg)
+        self._post(self._target, msg, mk if (down or double) else 0, pack_lparam(*self._client))
+
+    def _post_key(self, vk: int, down: bool, extended: bool) -> None:
+        scan = 0
+        mapper = getattr(self.user32, "MapVirtualKeyW", None)
+        if mapper:
+            scan = int(mapper(vk, 0)) & 0xFF
+        lparam = 1 | (scan << 16)
+        if extended:
+            lparam |= 1 << 24
+        if not down:
+            lparam |= (1 << 30) | (1 << 31)
+        self._post(self._target or self.hwnd, WM_KEYDOWN if down else WM_KEYUP, vk, lparam)
+
+    def _post(self, hwnd, msg: int, wparam: int, lparam: int) -> None:
+        self.user32.PostMessageW(hwnd, msg, wparam, lparam)
+
+    def _client_point(self, hwnd, x: float, y: float) -> tuple[int, int]:
+        client = _POINT(int(round(x)), int(round(y)))
+        self.user32.ScreenToClient(hwnd, ctypes.byref(client))
+        return int(client.x), int(client.y)
+
+    def _child_at(self, screen_x: float, screen_y: float) -> tuple[int, int, int]:
+        """Child hit-testing wants the parent's client coordinates, not screen coordinates."""
+        px, py = self._client_point(self.hwnd, screen_x, screen_y)
+        child = self.user32.RealChildWindowFromPoint(self.hwnd, _POINT(px, py)) if hasattr(self.user32, "RealChildWindowFromPoint") else 0
+        if not child and hasattr(self.user32, "ChildWindowFromPointEx"):
+            child = self.user32.ChildWindowFromPointEx(self.hwnd, _POINT(px, py), 0x0001 | 0x0004)
+        if not child:
+            child = self.hwnd
+        cx, cy = self._client_point(child, screen_x, screen_y)
+        return int(child), cx, cy
+
+    def _locate(self) -> None:
+        windows = self._read_top_windows()
+        if self.hwnd:
+            same = [w for w in windows if int(w["hwnd"]) == int(self.hwnd)]
+            if same:
+                win = same[0]
+                if win["iconic"] or win["w"] <= 0 or win["h"] <= 0:
+                    raise FensterNichtGefunden("Fenster ist minimiert")
+                self._apply(win)
+                return
+        self._apply(choose_window(windows, self.fenster))
+
+    def _apply(self, win: dict) -> None:
+        self.hwnd = int(win["hwnd"])
+        self.origin_x, self.origin_y = int(win["x"]), int(win["y"])
+        self.points_w, self.points_h = max(int(win["w"]), 1), max(int(win["h"]), 1)
+        self.width, self.height = self.points_w, self.points_h
+
+    def _read_top_windows(self) -> list[dict]:
+        found: list[dict] = []
+
+        def callback(hwnd, _lparam) -> bool:
+            if not self.user32.IsWindowVisible(hwnd):
+                return True
+            rect = _RECT()
+            self.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+            found.append({
+                "hwnd": int(hwnd),
+                "title": self._window_text(hwnd),
+                "app": self._process_name(hwnd),
+                "x": int(rect.left), "y": int(rect.top),
+                "w": int(rect.right - rect.left), "h": int(rect.bottom - rect.top),
+                "iconic": bool(self.user32.IsIconic(hwnd)),
+                "visible": True,
+            })
+            return True
+
+        enum = _win_callback(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(callback)
+        self.user32.EnumWindows(enum, 0)
+        return found
+
+    def _window_text(self, hwnd) -> str:
+        length = int(self.user32.GetWindowTextLengthW(hwnd) or 0)
+        buf = ctypes.create_unicode_buffer(length + 1)
+        self.user32.GetWindowTextW(hwnd, buf, length + 1)
+        return buf.value
+
+    def _process_name(self, hwnd) -> str:
+        pid = ctypes.c_uint32()
+        self.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        kernel = self._kernel32()
+        handle = kernel.OpenProcess(0x1000, False, pid.value)
+        if not handle:
+            return ""
+        try:
+            size = ctypes.c_uint32(512)
+            buf = ctypes.create_unicode_buffer(512)
+            if not kernel.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return ""
+            return buf.value
+        finally:
+            kernel.CloseHandle(handle)
+
+    def _kernel32(self):
+        if not hasattr(self, "_kernel"):
+            self._kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            _argtypes(self._kernel.OpenProcess, [ctypes.c_uint32, ctypes.c_bool, ctypes.c_uint32], ctypes.c_void_p)
+            _argtypes(self._kernel.CloseHandle, [ctypes.c_void_p], ctypes.c_bool)
+            _argtypes(
+                self._kernel.QueryFullProcessImageNameW,
+                [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint32)],
+                ctypes.c_bool,
+            )
+        return self._kernel
+
+    def _capture_bgra(self) -> bytes:
+        """PrintWindow into a top-down BGRX buffer. Flag 2 paints the window even when it is covered."""
+        user32, gdi = self.user32, self._gdi32()
+        self._bind_gdi(gdi)
+        w, h = self.points_w, self.points_h
+        hwnd = self.hwnd
+        hdc_win = user32.GetWindowDC(hwnd)
+        mem = gdi.CreateCompatibleDC(hdc_win)
+        bmp = gdi.CreateCompatibleBitmap(hdc_win, w, h)
+        old = gdi.SelectObject(mem, bmp)
+        try:
+            if not user32.PrintWindow(hwnd, mem, PW_RENDERFULLCONTENT):
+                raise RuntimeError("Fensterbild fehlgeschlagen.")
+            info = _BITMAPINFO()
+            info.bmiHeader.biSize = ctypes.sizeof(_BITMAPINFOHEADER)
+            info.bmiHeader.biWidth = w
+            info.bmiHeader.biHeight = h
+            info.bmiHeader.biPlanes = 1
+            info.bmiHeader.biBitCount = 32
+            info.bmiHeader.biCompression = 0
+            buf = ctypes.create_string_buffer(w * h * 4)
+            if gdi.GetDIBits(mem, bmp, 0, h, buf, ctypes.byref(info), 0) == 0:
+                raise RuntimeError("Fensterbild fehlgeschlagen.")
+            row = w * 4
+            rows = [buf.raw[i:i + row] for i in range(0, len(buf.raw), row)]
+            return b"".join(reversed(rows))
+        finally:
+            if mem and old:
+                gdi.SelectObject(mem, old)
+            if bmp:
+                gdi.DeleteObject(bmp)
+            if mem:
+                gdi.DeleteDC(mem)
+            if hdc_win:
+                user32.ReleaseDC(hwnd, hdc_win)
+
+    def _bind(self) -> None:
+        user32 = self.user32
+        _argtypes(user32.PostMessageW, [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_size_t], ctypes.c_bool)
+        _argtypes(user32.RealChildWindowFromPoint, [ctypes.c_void_p, _POINT], ctypes.c_void_p)
+        _argtypes(user32.ChildWindowFromPointEx, [ctypes.c_void_p, _POINT, ctypes.c_uint], ctypes.c_void_p)
+        _argtypes(user32.ScreenToClient, [ctypes.c_void_p, ctypes.POINTER(_POINT)], ctypes.c_bool)
+        _argtypes(user32.EnumWindows, [_win_callback(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p), ctypes.c_void_p], ctypes.c_bool)
+        _argtypes(user32.IsWindowVisible, [ctypes.c_void_p], ctypes.c_bool)
+        _argtypes(user32.IsIconic, [ctypes.c_void_p], ctypes.c_bool)
+        _argtypes(user32.GetWindowRect, [ctypes.c_void_p, ctypes.POINTER(_RECT)], ctypes.c_bool)
+        _argtypes(user32.GetWindowTextLengthW, [ctypes.c_void_p], ctypes.c_int)
+        _argtypes(user32.GetWindowTextW, [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int], ctypes.c_int)
+        _argtypes(user32.GetWindowThreadProcessId, [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)], ctypes.c_uint32)
+        _argtypes(user32.GetWindowDC, [ctypes.c_void_p], ctypes.c_void_p)
+        _argtypes(user32.ReleaseDC, [ctypes.c_void_p, ctypes.c_void_p], ctypes.c_int)
+        _argtypes(user32.PrintWindow, [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint], ctypes.c_bool)
+
+    def _gdi32(self):
+        return ctypes.WinDLL("gdi32", use_last_error=True)
+
+    def _bind_gdi(self, gdi) -> None:
+        _argtypes(gdi.CreateCompatibleDC, [ctypes.c_void_p], ctypes.c_void_p)
+        _argtypes(gdi.CreateCompatibleBitmap, [ctypes.c_void_p, ctypes.c_int, ctypes.c_int], ctypes.c_void_p)
+        _argtypes(gdi.SelectObject, [ctypes.c_void_p, ctypes.c_void_p], ctypes.c_void_p)
+        _argtypes(gdi.DeleteObject, [ctypes.c_void_p], ctypes.c_bool)
+        _argtypes(gdi.DeleteDC, [ctypes.c_void_p], ctypes.c_bool)
+        _argtypes(
+            gdi.GetDIBits,
+            [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p, ctypes.POINTER(_BITMAPINFO), ctypes.c_uint],
+            ctypes.c_int,
+        )

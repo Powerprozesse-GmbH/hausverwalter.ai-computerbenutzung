@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -32,18 +33,49 @@ PROTOCOL_VERSION = "2025-06-18"
 MAX_WAIT_SECONDS = 50
 START_WAIT_SECONDS = 25
 MAC_LAUNCHER = Path.home() / "Applications" / "hausverwalter.ai Computerbenutzung.app"
+APPLET_MARK = "hausverwalter.ai Computerbenutzung.app/Contents/MacOS/applet"
+
+
+def _applet_pids() -> list[int]:
+    """Pids of the Mac launcher. open does not start it again while one of these is still there."""
+    if sys.platform != "darwin":
+        return []
+    listed = subprocess.run(["ps", "-axww", "-o", "pid=,command="], capture_output=True, text=True)
+    found = []
+    for line in listed.stdout.splitlines():
+        line = line.strip()
+        if APPLET_MARK not in line:
+            continue
+        pid_text, cmd = line.split(None, 1)
+        if cmd.endswith("/MacOS/applet"):
+            try:
+                found.append(int(pid_text))
+            except ValueError:
+                continue
+    return found
 VERSION = "0.2.0"  # same as agent.VERSION (this file imports nothing heavy)
 
 TEXT = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+AUFTRAG = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string"},
+        "fenster": {"type": "string"},
+        "datenschutz": {"type": "boolean"},
+    },
+    "required": ["text"],
+}
 NONE = {"type": "object", "properties": {}}
+FEHLERARTEN = ("keine", "zugang", "guthaben", "verbindung", "abgebrochen", "sonstiges")
 TOOLS = [
     {
         "name": "computer_auftrag",
         "description": "Gibt dem Computer-Assistenten einen Auftrag, den er am Bildschirm erledigt: klicken, tippen, Programme bedienen "
         "(z. B. PowerHaus, Fernzugriff, Browser). Er arbeitet im Hintergrund weiter. Danach computer_status aufrufen, bis er fertig ist "
         "oder etwas fragt. Läuft schon ein Auftrag, geht der Text als Nachricht an ihn. Startet sich selbst und prüft die Mac-Freigaben selbst: "
-        "Einfach aufrufen. Nie den Nutzer bitten, etwas zu starten. Nie Freigaben aus deiner eigenen Shell testen, nie Freigaben für dein eigenes Programm verlangen.",
-        "inputSchema": TEXT,
+        "Einfach aufrufen. Nie den Nutzer bitten, etwas zu starten. Nie Freigaben aus deiner eigenen Shell testen, nie Freigaben für dein eigenes Programm verlangen. "
+        "Optional fenster: nur dieses Fenster. Optional datenschutz: true schaltet den Datenschutz-Modus an.",
+        "inputSchema": AUFTRAG,
     },
     {
         "name": "computer_nachricht",
@@ -76,6 +108,39 @@ KEY_MISSING = (
 )
 WAITING = 'Der Computer-Assistent wartet auf eine Freigabe. Schreibe dem Nutzer zuerst genau diesen deutschen Satz, Wort für Wort, nicht übersetzen, nichts sonst: „{}“ Führe erst dann selbst aus: open "{}" . Warte auf „fertig“, dann computer_status. Sagt der Nutzer, er sieht nichts: Befehl noch einmal ausführen.'
 REFUSED = "Der Computer-Assistent hat die Anfrage abgelehnt (Zugangs-Token passt nicht). Nicht den Nutzer bitten: In einer Minute noch einmal versuchen."
+KEY_FILE_MISSING = "Noch kein Schlüssel. Der API-Schlüssel steht in der Datei aus HV_API_KEY_FILE, eine Zeile, nichts davon in den Chat. Danach computer_status."
+
+
+class SendError(Exception):
+    def __init__(self, text: str) -> None:
+        self.text = text
+        super().__init__(text)
+
+
+def privacy_text(state: dict) -> str:
+    """Only the fields the controlling AI may see. Log lines and screen text stay out."""
+    dateien = state.get("dateien") if isinstance(state.get("dateien"), dict) else {}
+    art = state.get("fehlerart") or "keine"
+    meldung = state.get("meldung") if isinstance(state.get("meldung"), str) else ""
+    if state.get("paused"):
+        zustand = "pausiert"
+    elif state.get("running"):
+        zustand = "arbeitet"
+    else:
+        zustand = "fertig"
+    payload = {
+        "zustand": state.get("zustand") or zustand,
+        "schritte": state.get("schritte", 0),
+        "kosten": state.get("kosten", state.get("cost_usd", 0)),
+        "fehlerart": art if art in FEHLERARTEN else "sonstiges",
+        "dateien": {
+            "anzahl": dateien.get("anzahl", 0),
+            "endungen": dateien.get("endungen", []),
+            "groesse": dateien.get("groesse", 0),
+        },
+        "meldung": meldung,
+    }
+    return json.dumps(payload, ensure_ascii=False)
 
 
 class Bridge:
@@ -84,6 +149,7 @@ class Bridge:
     def __init__(self, url: str = URL) -> None:
         self.url = url
         self.seen: int | None = None
+        self.privacy = os.environ.get("HV_DATENSCHUTZ") == "1"
 
     def call(self, name: str, args: dict) -> str:
         try:
@@ -96,6 +162,12 @@ class Bridge:
 
     def _start(self) -> str | None:
         """Starts the assistant and waits for it. Returns the text for the agent if it cannot go on yet."""
+        if sys.platform == "linux":
+            if not self._key_saved():
+                return KEY_FILE_MISSING
+            if not self._launch():
+                return NOT_INSTALLED
+            return self._wait_until_up()
         if not mac_rights.read_status():
             if not self._key_saved():
                 return KEY_MISSING.format(f'"{sys.executable}" "{Path(__file__).with_name("api_key.py")}"')
@@ -113,25 +185,72 @@ class Bridge:
                 time.sleep(1)
         return NOT_RUNNING
 
+    def _wait_until_up(self) -> str | None:
+        deadline = time.time() + START_WAIT_SECONDS
+        while time.time() < deadline:
+            try:
+                self._state(None)
+                return None
+            except (urllib.error.URLError, OSError):
+                time.sleep(1)
+        return NOT_RUNNING
+
     def _key_saved(self) -> bool:
+        path = os.environ.get("HV_API_KEY_FILE")
+        if path:
+            try:
+                return bool(Path(path).read_text(encoding="utf-8").strip())
+            except OSError:
+                return False
         check = [sys.executable, str(Path(__file__).with_name("api_key.py")), "pruefen"]
         return subprocess.run(check, capture_output=True).returncode == 0
 
     def _launch(self) -> bool:
+        if sys.platform == "linux":
+            folder = Path(__file__).resolve().parent
+            subprocess.Popen([sys.executable, str(folder / "server.py")], cwd=folder, start_new_session=True)
+            return True
         if sys.platform == "win32":
             folder = Path(__file__).resolve().parent
             subprocess.Popen([str(Path(sys.executable).with_name("pythonw.exe")), str(folder / "server.py")], cwd=folder, creationflags=subprocess.CREATE_NO_WINDOW)
             return True
         if not MAC_LAUNCHER.exists():
             return False
+        # open does nothing while the applet is still alive, even if the server inside it is already dead.
+        # A quit event does not land while its start script is stuck, and a quit while it is not
+        # running can start it and close it again. Stop only a process that is really there.
+        pids = _applet_pids()
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        if pids:
+            deadline = time.time() + 3
+            while time.time() < deadline and _applet_pids():
+                time.sleep(0.2)
+            for pid in _applet_pids():
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
         subprocess.run(["open", str(MAC_LAUNCHER)], check=False)
         return True
 
     def _call(self, name: str, args: dict) -> str:
+        if name == "computer_auftrag" and (args.get("datenschutz") or os.environ.get("HV_DATENSCHUTZ") == "1"):
+            self.privacy = True
         if name in ("computer_auftrag", "computer_nachricht"):
             if self.seen is None:
                 self.seen = self._state(None)["total"]  # report from this task on, not older history
-            self._post("/send", {"text": args["text"]})
+            body = {"text": args["text"]}
+            if name == "computer_auftrag" and args.get("fenster"):
+                body["fenster"] = args["fenster"]
+            if self.privacy:
+                body["datenschutz"] = True
+            self._post("/send", body)
+            if self.privacy:
+                return self._privacy_status(0)
             return "Weitergegeben. Mit computer_status verfolgen."
         if name == "computer_status":
             return self._status(min(int(args.get("warte_sekunden", 20)), MAX_WAIT_SECONDS))
@@ -140,9 +259,14 @@ class Bridge:
         return {"/pause": "Pausiert.", "/resume": "Geht weiter.", "/stop": "Gestoppt."}[path]
 
     def _status(self, wait: int) -> str:
+        if self.privacy or os.environ.get("HV_DATENSCHUTZ") == "1":
+            return self._privacy_status(wait)
         since = self.seen if self.seen is not None else 0
         deadline = time.time() + wait
         state = self._state(since)
+        if state.get("datenschutz"):
+            self.privacy = True
+            return self._privacy_status(wait)
         while not state["log"] and state["running"] and not state["paused"] and time.time() < deadline:
             time.sleep(1)
             state = self._state(since)
@@ -159,6 +283,18 @@ class Bridge:
         lines = "\n".join(state["log"]) or "(nichts Neues)"
         return f"Zustand: {where}\nKosten bisher: {state['cost_usd']:.2f} USD\nNeue Schritte:\n{lines}\nLetzte Nachricht des Assistenten: {state['last_reply'] or '-'}"
 
+    def _privacy_status(self, wait: int) -> str:
+        deadline = time.time() + wait
+        state = self._state(None)
+        seen = (state.get("schritte"), state.get("running"), state.get("paused"), state.get("meldung"), state.get("fehlerart"))
+        while state.get("running") and not state.get("paused") and time.time() < deadline:
+            time.sleep(1)
+            state = self._state(None)
+            now = (state.get("schritte"), state.get("running"), state.get("paused"), state.get("meldung"), state.get("fehlerart"))
+            if now != seen:
+                break
+        return privacy_text(state)
+
     def _state(self, since: int | None) -> dict:
         query = f"?since={since}" if since is not None else ""
         request = urllib.request.Request(self.url + "/state" + query, headers=local_auth.headers())
@@ -168,7 +304,15 @@ class Bridge:
     def _post(self, path: str, body: dict) -> None:
         headers = {"content-type": "application/json", **local_auth.headers()}
         request = urllib.request.Request(self.url + path, data=json.dumps(body).encode(), headers=headers)
-        urllib.request.urlopen(request, timeout=5).read()
+        try:
+            urllib.request.urlopen(request, timeout=5).read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409:
+                raw = exc.read().decode("utf-8", "replace")
+                if self.privacy or raw.strip() == "sonstiges":
+                    raise SendError(privacy_text({"fehlerart": "sonstiges", "zustand": "fertig"})) from None
+                raise SendError(raw) from None
+            raise
 
 
 def handle(bridge: Bridge, message: dict) -> dict | None:
@@ -190,6 +334,8 @@ def handle(bridge: Bridge, message: dict) -> dict | None:
         params = message.get("params", {})
         try:
             text, failed = bridge.call(params.get("name", ""), params.get("arguments") or {}), False
+        except SendError as exc:
+            text, failed = exc.text, True
         except KeyError as exc:
             text, failed = f"Unbekanntes Werkzeug oder fehlendes Feld: {exc}", True
         except urllib.error.HTTPError as exc:

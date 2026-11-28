@@ -121,15 +121,22 @@ Unter Windows heißt der Python-Pfad `<Installationsordner>\venv\Scripts\python.
 - Schlüssel löschen: `<Python> <Installationsordner>/app/desktop_agent/api_key.py loeschen`
 - Deinstallieren: Schlüssel löschen, dann den Installationsordner und das Startsymbol löschen.
 
+## Linux-Container, Datenschutz, Platzhalter, Fenster
+
+- Linux (Container, X11 über `DISPLAY`): `LinuxScreen` macht das Bild mit mss, Maus und Tasten mit xdotool, Texterkennung mit `tesseract -l deu+eng tsv`. `key`, `keydown` und `keyup` bekommen nur einen Wert aus der festen Tastenliste oder ein einzelnes Zeichen, immer hinter `--`. Kein Leuchtrand, keine Mac-Rechte, kein Startsymbol, kein Schlüsselfenster. Liegt `HV_API_KEY_FILE`, kommt der API-Schlüssel aus dieser Datei.
+- Datenschutz: `HV_DATENSCHUTZ=1` bleibt an. Sonst `datenschutz: true` im Auftrag. Die steuernde KI bekommt nur Zustand, Schritte, Kosten, Fehlerart, Dateien (Anzahl, Endungen, Größe aus `HV_EXPORT_DIR`) und eine feste Meldung. Die Bedien-KI soll die Zeile allein als letzte Zeile ohne Formatierung schreiben: `ERGEBNIS: stand=erledigt|teilweise|nicht_erledigt; anzahl=<Zahl>; grund=keine|zugang_fehlt|nicht_gefunden|programm_fehler|rueckfrage|abgebrochen|sonstiges`. Gelesen wird die letzte Fundstelle, auch mit Punkt oder Sternchen daneben. In den Satz kommen nur die drei Werte. Fehlt die Zeile: „Ergebnis unklar (Datenschutz), bitte Protokoll prüfen lassen.“ Endungen nur Punkt plus 1–8 Buchstaben oder Ziffern, sonst `.andere`. Protokoll nur in `HV_PROTOKOLL_DIR`, wenn der Ordner gesetzt ist.
+- Platzhalter: `HV_GEHEIM_DATEI` mit Zeilen `NAME=WERT`. Die Bedien-KI tippt `{{NAME}}`. Der Wert wird erst beim Tippen eingesetzt, diese Aktion macht kein neues Bild. Danach werden erkannte Stellen, die den Wert oder ein Teilstück ab 4 Zeichen enthalten, im Bild geschwärzt und im Text durch `{{NAME}}` ersetzt.
+- Fenster: `computer_auftrag` mit `fenster` (Fenstertitel). Mac und Windows steuern dann nur dieses Fenster.
+
 ## Für Entwickler
 
 ```bash
 uv venv --python 3.12 && uv pip install -r requirements.txt
-cd desktop_agent && PYTHONPATH=.. ../.venv/bin/python -m unittest test_agent.py test_mcp_server.py test_win_control.py test_server.py test_api_key.py test_install_ps1.py
+cd desktop_agent && PYTHONPATH=.. ../.venv/bin/python -m unittest test_agent.py test_mcp_server.py test_linux_control.py test_win_control.py test_server.py test_api_key.py test_install_ps1.py
 ```
 
 - `desktop_agent/agent.py`: Ablauf (Modellaufrufe, Pause/Stopp, Zusammenfassung langer Verläufe)
-- `desktop_agent/mac_control.py`, `win_control.py`: Bildschirm, Maus, Tastatur, Texterkennung
+- `desktop_agent/mac_control.py`, `win_control.py`, `linux_control.py`: Bildschirm, Maus, Tastatur, Texterkennung
 - `desktop_agent/server.py`: Bedienfenster auf 127.0.0.1:8765, `overlay.py` / `overlay_win.py`: Rahmen und Leiste
 - `desktop_agent/mcp_server.py`: MCP-Server für KI-Agenten, `api_key.py`: Schlüssel im Schlüsselspeicher
 

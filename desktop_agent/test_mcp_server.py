@@ -6,6 +6,8 @@ Run: .venv/bin/python -m unittest test_mcp_server.py
 import io
 import json
 import os
+import signal
+import sys
 import tempfile
 import unittest
 import urllib.error
@@ -103,6 +105,101 @@ class McpServerTest(unittest.TestCase):
         bridge.lines.append("Problem: KI-Guthaben aufgebraucht.")
         text = mcp_server.handle(bridge, _call(1, "computer_status", {"warte_sekunden": 0}))["result"]["content"][0]["text"]
         self.assertIn("Auftrag abgebrochen. Problem: KI-Guthaben aufgebraucht.", text)
+
+    def test_fenster_is_forwarded(self):
+        bridge = FakeBridge()
+        mcp_server.handle(bridge, _call(1, "computer_auftrag", {"text": "tippe", "fenster": "TextEdit"}))
+        self.assertEqual(bridge.posts[0], ("/send", {"text": "tippe", "fenster": "TextEdit"}))
+
+    def test_privacy_status_hides_names_iban_and_amounts(self):
+        bridge = FakeBridge()
+        bridge.privacy = True
+        bridge.lines = ["KI: Erika Mustermann DE89370400440532013000 1250,00", "Aktion: type „DE89370400440532013000“"]
+
+        def state(since):
+            return {
+                "datenschutz": True, "total": 2, "running": False, "paused": False,
+                "log": bridge.lines, "last_reply": "Erika Mustermann DE89370400440532013000 1250,00",
+                "zustand": "fertig", "schritte": 2, "kosten": 0.2, "fehlerart": "keine",
+                "dateien": {"anzahl": 1, "endungen": [".pdf"], "groesse": 4, "namen": "Erika Mustermann.pdf"},
+                "meldung": "2 Dateien", "cost_usd": 0.2,
+            }
+
+        bridge._state = state
+        text = mcp_server.handle(bridge, _call(1, "computer_status", {"warte_sekunden": 0}))["result"]["content"][0]["text"]
+        for secret in ("Erika", "Mustermann", "DE89", "1250", "type"):
+            self.assertNotIn(secret, text)
+        self.assertEqual(set(json.loads(text)), {"zustand", "schritte", "kosten", "fehlerart", "dateien", "meldung"})
+        self.assertEqual(json.loads(text)["dateien"], {"anzahl": 1, "endungen": [".pdf"], "groesse": 4})
+
+    def test_env_forces_privacy_on_the_reply(self):
+        with mock.patch.dict(os.environ, {"HV_DATENSCHUTZ": "1"}):
+            bridge = FakeBridge()
+            text = mcp_server.handle(bridge, _call(1, "computer_auftrag", {"text": "Erika Mustermann 1250,00"}))["result"]["content"][0]["text"]
+        self.assertNotIn("Erika", text)
+        self.assertNotIn("Weitergegeben", text)
+        self.assertNotIn("PowerHaus", text)
+        self.assertEqual(json.loads(text)["fehlerart"], "keine")
+
+    def test_mac_launch_stops_leftover_applet_before_open(self):
+        calls = []
+        killed = []
+        seen_ps = {"n": 0}
+
+        def run(cmd, check=False, capture_output=False, timeout=None, text=False):
+            calls.append(cmd)
+            stdout = ""
+            if cmd[0] == "ps":
+                seen_ps["n"] += 1
+                if seen_ps["n"] == 1:
+                    stdout = "24137 /Applications/hausverwalter.ai Computerbenutzung.app/Contents/MacOS/applet\n"
+            return mock.Mock(returncode=0, stdout=stdout)
+
+        launcher = mock.Mock()
+        launcher.exists.return_value = True
+        with mock.patch.object(sys, "platform", "darwin"), \
+             mock.patch.object(mcp_server, "MAC_LAUNCHER", launcher), \
+             mock.patch.object(mcp_server.subprocess, "run", run), \
+             mock.patch.object(mcp_server.os, "kill", lambda pid, sig: killed.append((pid, sig))), \
+             mock.patch.object(mcp_server.time, "sleep"):
+            self.assertTrue(mcp_server.Bridge()._launch())
+        self.assertEqual(killed, [(24137, signal.SIGTERM)])
+        self.assertEqual(calls[-1][0], "open")
+        self.assertNotIn("osascript", [cmd[0] for cmd in calls])
+
+    def test_mac_launch_does_not_stop_when_the_applet_is_gone(self):
+        calls = []
+        killed = []
+
+        def run(cmd, check=False, capture_output=False, timeout=None, text=False):
+            calls.append(cmd[0])
+            return mock.Mock(returncode=0, stdout="")
+
+        launcher = mock.Mock()
+        launcher.exists.return_value = True
+        with mock.patch.object(sys, "platform", "darwin"), \
+             mock.patch.object(mcp_server, "MAC_LAUNCHER", launcher), \
+             mock.patch.object(mcp_server.subprocess, "run", run), \
+             mock.patch.object(mcp_server.os, "kill", lambda pid, sig: killed.append((pid, sig))):
+            self.assertTrue(mcp_server.Bridge()._launch())
+        self.assertEqual(calls, ["ps", "open"])
+        self.assertEqual(killed, [])
+
+    def test_linux_starts_without_mac_rights(self):
+        bridge = _down_bridge(True)
+        with mock.patch.object(sys, "platform", "linux"), mock.patch.object(mcp_server.mac_rights, "read_status", side_effect=AssertionError("mac")):
+            mcp_server.handle(bridge, _call(1, "computer_stopp", {}))
+        self.assertEqual(bridge.launches, 1)
+        self.assertEqual(bridge.posts, [("/stop", {})])
+
+    def test_linux_missing_key_opens_no_window(self):
+        bridge = _down_bridge(True)
+        bridge._key_saved = lambda: False
+        with mock.patch.object(sys, "platform", "linux"):
+            text = mcp_server.handle(bridge, _call(1, "computer_status", {"warte_sekunden": 0}))["result"]["content"][0]["text"]
+        self.assertEqual(text, mcp_server.KEY_FILE_MISSING)
+        self.assertNotIn("fenster", text.lower())
+        self.assertEqual(bridge.launches, 0)
 
     def test_unknown_method(self):
         reply = mcp_server.handle(FakeBridge(), {"jsonrpc": "2.0", "id": 9, "method": "resources/list"})

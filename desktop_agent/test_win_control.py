@@ -13,6 +13,8 @@ from unittest import mock
 
 import win_control as w
 
+WINFUNCTYPE = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+
 CTRL, SHIFT, ALT, WIN = w.VK_CONTROL, w.VK_SHIFT, w.VK_MENU, w.VK_LWIN
 
 
@@ -214,6 +216,244 @@ def _screen(phys_w, phys_h):
     screen.last_click, screen.last_texts, screen.stop_event = None, [], None
     screen.user32 = SimpleNamespace(VkKeyScanW=lambda char: -1)
     return screen
+
+
+def _winrow(hwnd, title, app, x, y, width, height, iconic=False):
+    return {"hwnd": hwnd, "title": title, "app": app, "x": x, "y": y, "w": width, "h": height, "iconic": iconic, "visible": True}
+
+
+WIN_ROWS = [
+    _winrow(1, "klein", r"C:\App\TextEdit.exe", 0, 0, 100, 80),
+    _winrow(2, "Entwurf", r"C:\App\TextEdit.exe", 100, 40, 400, 300),
+    _winrow(3, "Start", r"C:\App\Safari.exe", 0, 0, 800, 600, iconic=True),
+    _winrow(4, "Dock", r"C:\App\Dock.exe", 0, 800, 1440, 40),
+]
+
+
+class ChooseWinWindowTest(unittest.TestCase):
+    def test_largest_match_ignores_case(self):
+        self.assertEqual(w.choose_window(WIN_ROWS, "textedit")["hwnd"], 2)
+        self.assertEqual(w.choose_window(WIN_ROWS, "ENTWURF")["hwnd"], 2)
+
+    def test_minimized(self):
+        with self.assertRaises(w.FensterNichtGefunden) as caught:
+            w.choose_window(WIN_ROWS, "safari")
+        self.assertEqual(str(caught.exception), "Fenster ist minimiert")
+
+    def test_missing_lists_visible_apps(self):
+        with self.assertRaises(w.FensterNichtGefunden) as caught:
+            w.choose_window(WIN_ROWS, "gibt es nicht")
+        self.assertEqual(caught.exception.namen, ["Dock", "TextEdit"])
+
+    def test_pack_and_point(self):
+        self.assertEqual(w.pack_lparam(10, 25), (10 & 0xFFFF) | (25 << 16))
+        self.assertEqual(w.pack_lparam(-1, 2) & 0xFFFF, 0xFFFF)
+
+
+class WinWindowInputTest(unittest.TestCase):
+    def setUp(self):
+        self.posts = []
+        self.screen = w.WinWindowScreen.__new__(w.WinWindowScreen)
+        self.screen.fenster = "TextEdit"
+        self.screen.hwnd = 2
+        self.screen.origin_x, self.screen.origin_y = 100, 40
+        self.screen.points_w, self.screen.points_h = 400, 300
+        self.screen.width, self.screen.height = 400, 300
+        self.screen.last_click, self.screen.last_texts, self.screen.stop_event = None, [], None
+        self.screen._at = None
+        self.screen._target = 0
+        self.screen._client = (0, 0)
+        self.screen._locate = lambda: None
+        self.screen._child_at = lambda x, y: (55, int(round(x - 100)), int(round(y - 40)))
+        names = []
+
+        def call(name):
+            def fn(*args):
+                names.append(name)
+                if name == "PostMessageW":
+                    self.posts.append(args)
+                    return True
+                if name in ("SendInput", "SetForegroundWindow"):
+                    raise AssertionError(name)
+                if name == "MapVirtualKeyW":
+                    return 0
+                raise AttributeError(name)
+            return fn
+
+        self.screen.user32 = SimpleNamespace(
+            PostMessageW=call("PostMessageW"), SendInput=call("SendInput"),
+            SetForegroundWindow=call("SetForegroundWindow"), MapVirtualKeyW=call("MapVirtualKeyW"),
+            VkKeyScanW=lambda char: -1,
+        )
+        self.names = names
+        patch = mock.patch.object(w.time, "sleep")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_click_is_postmessage_not_sendinput(self):
+        self.assertEqual(self.screen.cursor_in_screenshot(), [200, 150])
+        self.screen.run({"action": "double_click", "coordinate": [50, 60]}, look=False)
+        self.assertEqual(self.screen.cursor_in_screenshot(), [50, 60])
+        self.assertNotIn("SendInput", self.names)
+        self.assertNotIn("SetForegroundWindow", self.names)
+        msgs = [row[1] for row in self.posts]
+        self.assertEqual(msgs.count(w.WM_MOUSEMOVE), 1)
+        self.assertIn(w.WM_LBUTTONDBLCLK, msgs)
+        move = self.posts[0]
+        self.assertEqual(move[0], 55)
+        self.assertEqual(move[3], w.pack_lparam(50, 60))  # screen (150, 100) minus origin (100, 40)
+
+    def test_right_click_wheel_key_and_char(self):
+        self.screen.run({"action": "right_click", "coordinate": [1, 1]}, look=False)
+        self.assertIn(w.WM_RBUTTONDOWN, [row[1] for row in self.posts])
+        self.posts.clear()
+        self.screen.run({"action": "scroll", "scroll_direction": "down", "scroll_amount": 3}, look=False)
+        wheels = [row for row in self.posts if row[1] == w.WM_MOUSEWHEEL]
+        self.assertEqual(len(wheels), 1)
+        self.assertEqual(wheels[0][2], ((-360) & 0xFFFF) << 16)
+        self.posts.clear()
+        self.screen.run({"action": "key", "text": "ctrl+s"}, look=False)
+        keys = [row for row in self.posts if row[1] in (w.WM_KEYDOWN, w.WM_KEYUP)]
+        self.assertEqual(keys[0][2], CTRL)
+        self.assertEqual(keys[1][2], ord("S"))
+        self.posts.clear()
+        self.screen._type("A")
+        chars = [row for row in self.posts if row[1] == w.WM_CHAR]
+        self.assertEqual([row[2] for row in chars], [ord("A")])
+
+    def test_drag_keeps_the_mousedown_window(self):
+        def child_at(x, y):
+            return (55 if x < 200 else 99, 1, 2)
+
+        @WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.POINTER(w._POINT))
+        def to_client(hwnd, pt):
+            pt.contents.x -= 100
+            pt.contents.y -= 40
+            return True
+
+        self.screen._child_at = child_at
+        self.screen.user32.ScreenToClient = to_client
+        self.screen.run({"action": "left_click_drag", "start_coordinate": [0, 0], "coordinate": [300, 0]}, look=False)
+        mouse = [row for row in self.posts if row[1] in (w.WM_MOUSEMOVE, w.WM_LBUTTONDOWN, w.WM_LBUTTONUP)]
+        self.assertGreaterEqual(len(mouse), 3)
+        self.assertTrue(all(row[0] == 55 for row in mouse))
+        moves = [row for row in mouse if row[1] == w.WM_MOUSEMOVE]
+        self.assertEqual(moves[-1][3], w.pack_lparam(300, 0))
+
+    def test_child_window_and_no_foreground(self):
+        seen = {}
+
+        @WINFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, w._POINT)
+        def real_child(hwnd, pt):
+            seen["pt"] = (pt.x, pt.y)
+            return 55
+
+        @WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.POINTER(w._POINT))
+        def to_client(hwnd, pt):
+            seen.setdefault("order", []).append(("screen", int(hwnd), pt.contents.x, pt.contents.y))
+            if int(hwnd) == 2:  # parent: screen (150, 100) → client (50, 60)
+                pt.contents.x -= 100
+                pt.contents.y -= 40
+            else:  # child sits 10 px further in
+                pt.contents.x -= 110
+                pt.contents.y -= 50
+            return True
+
+        @WINFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, w._POINT, ctypes.c_uint)
+        def child_ex(hwnd, pt, flags):
+            seen["fallback"] = (pt.x, pt.y, flags)
+            return 77
+
+        def forbidden(*_args):
+            raise AssertionError("foreground")
+
+        self.screen.user32.RealChildWindowFromPoint = real_child
+        self.screen.user32.ScreenToClient = to_client
+        self.screen.user32.ChildWindowFromPointEx = child_ex
+        self.screen.user32.SetForegroundWindow = forbidden
+        del self.screen._child_at
+        child, x, y = w.WinWindowScreen._child_at(self.screen, 150, 100)
+        self.assertEqual(seen["order"][0], ("screen", 2, 150, 100))
+        self.assertEqual(seen["pt"], (50, 60))  # parent client point, not the screen point
+        self.assertEqual(seen["order"][1], ("screen", 55, 150, 100))
+        self.assertEqual((child, x, y), (55, 40, 50))
+        self.screen.user32.RealChildWindowFromPoint = lambda *args: 0
+        seen.clear()
+        child, x, y = w.WinWindowScreen._child_at(self.screen, 150, 100)
+        self.assertEqual(seen["fallback"][:2], (50, 60))
+        self.assertEqual(child, 77)
+
+    def test_enum_marks_minimized_and_reads_title(self):
+        @WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.POINTER(w._RECT))
+        def get_rect(hwnd, rect):
+            rect.contents.left, rect.contents.top = 10, 20
+            rect.contents.right, rect.contents.bottom = 110, 70
+            return True
+
+        def enum(cb, _lp):
+            cb(7, 0)
+            return True
+
+        user32 = SimpleNamespace(
+            EnumWindows=enum,
+            IsWindowVisible=lambda hwnd: True,
+            IsIconic=lambda hwnd: True,
+            GetWindowRect=get_rect,
+            GetWindowTextLengthW=lambda hwnd: 4,
+            GetWindowTextW=lambda hwnd, buf, n: setattr(buf, "value", "Mail") or 4,
+            GetWindowThreadProcessId=lambda hwnd, pid: None,
+        )
+        self.screen.user32 = user32
+        self.screen._process_name = lambda hwnd: r"C:\App\Mail.exe"
+        rows = self.screen._read_top_windows()
+        self.assertEqual(rows[0]["title"], "Mail")
+        self.assertTrue(rows[0]["iconic"])
+        self.assertEqual((rows[0]["x"], rows[0]["y"], rows[0]["w"], rows[0]["h"]), (10, 20, 100, 50))
+        with self.assertRaises(w.FensterNichtGefunden) as caught:
+            w.choose_window(rows, "mail")
+        self.assertEqual(str(caught.exception), "Fenster ist minimiert")
+
+    def test_print_window_flag_without_foreground(self):
+        flags = []
+
+        class Gdi:
+            def CreateCompatibleDC(self, hdc):
+                return 1
+
+            def CreateCompatibleBitmap(self, hdc, width, height):
+                return 2
+
+            def SelectObject(self, dc, obj):
+                return 3
+
+            def GetDIBits(self, hdc, bmp, start, lines, buf, info, usage):
+                ctypes.memset(buf, 7, 2 * 2 * 4)
+                return lines
+
+            def DeleteObject(self, obj):
+                return True
+
+            def DeleteDC(self, dc):
+                return True
+
+        def print_window(hwnd, hdc, flag):
+            flags.append((hwnd, flag))
+            return True
+
+        def forbidden(*_args):
+            raise AssertionError("foreground or sendinput")
+
+        self.screen.points_w = self.screen.points_h = 2
+        self.screen.hwnd = 7
+        self.screen.user32.GetWindowDC = lambda hwnd: 9
+        self.screen.user32.ReleaseDC = lambda hwnd, hdc: 1
+        self.screen.user32.PrintWindow = print_window
+        self.screen.user32.SetForegroundWindow = forbidden
+        self.screen.user32.SendInput = forbidden
+        self.screen._gdi32 = Gdi
+        raw = self.screen._capture_bgra()
+        self.assertEqual(flags, [(7, w.PW_RENDERFULLCONTENT)])
+        self.assertEqual(len(raw), 16)
 
 
 if __name__ == "__main__":
